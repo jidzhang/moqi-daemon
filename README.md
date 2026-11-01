@@ -1,4 +1,4 @@
-# MoqiHelper（阶段 5：Go 后端 C++ 重写）
+# MoqiDaemon（阶段 5：Go 后端 C++ 重写）
 
 用 C++ 重写 `MoqiIME.exe`（Go 后端，11.5MB，运行时占底），目标产物 ~1-2MB。
 新建独立仓（用户 2026-11-01 拍板"现在就干"），通过相对路径复用
@@ -39,7 +39,7 @@ Go 侧这些逻辑（~24k 行）中，**按键路径语义已在阶段 2 以 C++
 
 ## 奇偶矩阵（Parity Matrix，逐项补齐后才能替换 Go）
 
-| 功能 | Go 现状 | Helper 阶段 | 状态 |
+| 功能 | Go 现状 | Daemon 阶段 | 状态 |
 |---|---|---|---|
 | init/activate/deactivate | ✓ | A | 本次 |
 | 按键四方法（filter/on Key down/up） | ✓ | A | 本次 |
@@ -56,19 +56,25 @@ Go 侧这些逻辑（~24k 行）中，**按键路径语义已在阶段 2 以 C++
 | scheme_set 方案集管理 | ✓ | B | 待 |
 
 替换策略：奇偶矩阵全绿前，Go 后端继续随包发布；矩阵绿后把
-backends.json 指向 helper。
+backends.json 指向 daemon。
 
 ## 目录
 
 ```
-moqi-helper/
+moqi-daemon/
   CMakeLists.txt       # 复用 ../moqi-im-windows 源码的构建
   src/main.cpp         # stdin/stdout 帧循环 + 分发
-  src/HelperEngine.cpp # 每客户端会话 + 方法实现（移植自 LocalEngine）
-  src/HelperEngine.h
+  src/DaemonEngine.cpp # 每客户端会话 + 方法实现（移植自 LocalEngine）
+  src/DaemonEngine.h
 ```
 
 ## 验证
 
-帧级手测：`echo <framed json> | MoqiHelper.exe`（见 docs 验证脚本）；
+帧级手测：`echo <framed json> | MoqiDaemon.exe`（见 docs 验证脚本）；
 端到端：backends.json 切后端 → x86 应用 / MOQI_LOCAL_ENGINE=0 打字冒烟。
+
+## 命名定案（2026-11-01 用户拍板）
+
+- 后台服务进程名 **MoqiDaemon**（致敬谷歌 GooglePinyinDaemon 血统）
+- MoqiLaunch 名字暂不动；终态 = 并入 MoqiDaemon 后退休（DLL + Daemon 两件套，与谷歌同构）。
+  若终态需单独改名，备选 MoqiServer（WeaselServer 血统）。

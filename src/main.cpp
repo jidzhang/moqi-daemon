@@ -1,12 +1,12 @@
 //
-//	moqi-helper main: stdin/stdout JSON-frame loop replacing the Go backend
+//	moqi-daemon main: stdin/stdout JSON-frame loop replacing the Go backend
 //	for the RPC fallback path (phase 5). Protocol = 4-byte LE length prefix
 //	+ protojson-compatible JSON, identical to what the launcher speaks to
 //	MoqiIME.exe today. Only the key path is implemented; cold methods
 //	(menus/AI/cloud clipboard) return success-empty by design (user
 //	2026-11-01: 用不到的接口不写，Go 代码保留可随时切回).
 //
-#include "HelperEngine.h"
+#include "DaemonEngine.h"
 #include "ProtoFraming.h"
 #include "RimeCore.h"
 
@@ -22,8 +22,8 @@ using namespace std;
 using namespace Moqi;
 
 namespace Moqi {
-extern std::wstring g_helperProgramDir;
-extern std::wstring g_helperBackendDir;
+extern std::wstring g_daemonProgramDir;
+extern std::wstring g_daemonBackendDir;
 }
 
 namespace {
@@ -41,19 +41,19 @@ wstring exeDir() {
 void resolveLayout() {
   const wchar_t* overrideDir = _wgetenv(L"MOQI_PROGRAM_DIR");
   wstring programDir = overrideDir && *overrideDir ? wstring(overrideDir) : exeDir();
-  g_helperProgramDir = programDir;
-  g_helperBackendDir = L"moqi-ime";
+  g_daemonProgramDir = programDir;
+  g_daemonBackendDir = L"moqi-ime";
 }
 
-void helperLog(const wstring& message) {
-  // 轻量日志：%LOCALAPPDATA%\MoqiIM\Log\moqi-helper.log（追加）。
+void daemonLog(const wstring& message) {
+  // 轻量日志：%LOCALAPPDATA%\MoqiIM\Log\moqi-daemon.log（追加）。
   wchar_t* local = nullptr;
   if (SUCCEEDED(::SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local))) {
     wstring dir(local);
     ::CoTaskMemFree(local);
     dir += L"\\MoqiIM\\Log";
     ::CreateDirectoryW(dir.c_str(), nullptr);
-    wofstream out(dir + L"\\moqi-helper.log", ios::app);
+    wofstream out(dir + L"\\moqi-daemon.log", ios::app);
     if (out.is_open()) {
       out << message << L"\n";
     }
@@ -79,7 +79,7 @@ bool keyDataFromJson(const Json::Value& j, KeyEventData* e, vector<BYTE>& states
 }
 
 struct ClientEntry {
-  HelperEngine engine;
+  DaemonEngine engine;
 };
 
 map<string, ClientEntry> g_clients;
@@ -105,7 +105,7 @@ void dispatch(const Json::Value& req, Json::Value& resp) {
     keyDataFromJson(keyEvent, &e, states);
   }
   ClientEntry& entry = clientFor(req);
-  HelperEngine& engine = entry.engine;
+  DaemonEngine& engine = entry.engine;
   engine.ensureEngine();
   resp = makeResponse(req);
 
@@ -197,8 +197,8 @@ int main() {
   _setmode(_fileno(stdout), _O_BINARY);
 
   resolveLayout();
-  setCoreLogSink(&helperLog);
-  helperLog(L"moqi-helper start");
+  setCoreLogSink(&daemonLog);
+  daemonLog(L"moqi-daemon start");
 
   Proto::FrameBuffer frames;
   char buf[8192];
@@ -212,7 +212,7 @@ int main() {
     while (frames.nextFrame(payload)) {
       Json::Value req;
       if (!Proto::parseJsonPayload(payload, req)) {
-        helperLog(L"bad request frame, exiting");
+        daemonLog(L"bad request frame, exiting");
         return 1;
       }
       Json::Value resp;
@@ -226,6 +226,6 @@ int main() {
       }
     }
   }
-  helperLog(L"moqi-helper exit");
+  daemonLog(L"moqi-daemon exit");
   return 0;
 }

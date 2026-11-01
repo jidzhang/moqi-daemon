@@ -1,8 +1,8 @@
 //
-//	HelperEngine.cpp: per-client session logic ported verbatim from
+//	DaemonEngine.cpp: per-client session logic ported verbatim from
 //	LocalEngine.cpp (phase 5) with the TSF coupling removed.
 //
-#include "HelperEngine.h"
+#include "DaemonEngine.h"
 
 #include <algorithm>
 #include <fstream>
@@ -12,29 +12,29 @@ using namespace std;
 namespace Moqi {
 
 // main.cpp 注入的安装布局（engine init 需要）。
-std::wstring g_helperProgramDir;
-std::wstring g_helperBackendDir;
+std::wstring g_daemonProgramDir;
+std::wstring g_daemonBackendDir;
 
-void HelperEngine::ensureEngine() {
+void DaemonEngine::ensureEngine() {
   RimeRuntime& runtime = RimeRuntime::instance();
   if (!runtime.supported() || runtime.failed() || runtime.ready()) {
     return;
   }
-  runtime.requestInit(g_helperProgramDir, g_helperBackendDir);
+  runtime.requestInit(g_daemonProgramDir, g_daemonBackendDir);
   const ULONGLONG deadline = ::GetTickCount64() + 30000;
   while (!runtime.ready() && !runtime.failed() && ::GetTickCount64() < deadline) {
     ::Sleep(50);
   }
 }
 
-bool HelperEngine::engineReady() const {
+bool DaemonEngine::engineReady() const {
   return RimeRuntime::instance().ready();
 }
 
 
-HelperEngine::HelperEngine() {}
+DaemonEngine::DaemonEngine() {}
 
-void HelperEngine::deactivate() {
+void DaemonEngine::deactivate() {
   if (sessionId_ == 0) {
     return;
   }
@@ -46,7 +46,7 @@ void HelperEngine::deactivate() {
   keyComposing_ = false;
 }
 
-bool HelperEngine::ensureSession() {
+bool DaemonEngine::ensureSession() {
   if (sessionId_ != 0) {
     return true;
   }
@@ -57,7 +57,7 @@ bool HelperEngine::ensureSession() {
 
 // Sets menu/page_size to the configured candidate count (backend
 // createSession(): SetCandidatePageSize when count != 9).
-bool HelperEngine::refreshPageSize() {
+bool DaemonEngine::refreshPageSize() {
   if (sessionId_ == 0 || candidateCount_ == 9) {
     return true;
   }
@@ -79,7 +79,7 @@ bool HelperEngine::refreshPageSize() {
   return ok;
 }
 
-HelperEngine::EngineState HelperEngine::currentState(bool* engineOk) {
+DaemonEngine::EngineState DaemonEngine::currentState(bool* engineOk) {
   RimeRuntime& runtime = RimeRuntime::instance();
   EngineState state;
   *engineOk = sessionId_ != 0 && runtime.rimeFindSession(sessionId_) != 0;
@@ -125,7 +125,7 @@ HelperEngine::EngineState HelperEngine::currentState(bool* engineOk) {
 
 // Port of snapshotRawInputForCommit: 提交类按键前保存 raw 快照（供
 // typo_memory 记录；空格提交时跟踪值即将清零）。
-void HelperEngine::snapshotRawInputForCommit() {
+void DaemonEngine::snapshotRawInputForCommit() {
   if (!rawInputTracked_.empty()) {
     rawInputAtCommit_ = rawInputTracked_;
   }
@@ -134,7 +134,7 @@ void HelperEngine::snapshotRawInputForCommit() {
 
 // Port of updateTrackedRawInput：跟踪用户实际敲的字母串（a-z 与 '），
 // 供错字记忆在提交时配对；keyCode/charCode 是重排换算后的有效键值。
-void HelperEngine::updateTrackedRawInput(const KeyEventData& e, UINT keyCode,
+void DaemonEngine::updateTrackedRawInput(const KeyEventData& e, UINT keyCode,
                                         UINT charCode, bool backendRet) {
   if (!backendRet) {
     return;
@@ -182,7 +182,7 @@ void HelperEngine::updateTrackedRawInput(const KeyEventData& e, UINT keyCode,
 
 // Port of processKey(): translate, send to the engine, then the backend's
 // special cases (arrow fallback, Return/Shift/CapsLock handling).
-bool HelperEngine::processKey(const KeyEventData& e, bool isUp, bool* ret) {
+bool DaemonEngine::processKey(const KeyEventData& e, bool isUp, bool* ret) {
   RimeRuntime& runtime = RimeRuntime::instance();
   if (!ensureSession()) {
     *ret = false;
@@ -267,7 +267,7 @@ bool HelperEngine::processKey(const KeyEventData& e, bool isUp, bool* ret) {
   return true;
 }
 
-bool HelperEngine::readInputModes(bool* asciiMode, bool* fullShape) {
+bool DaemonEngine::readInputModes(bool* asciiMode, bool* fullShape) {
   RimeRuntime& runtime = RimeRuntime::instance();
   if (sessionId_ == 0 || !runtime.rimeFindSession(sessionId_)) {
     return false;
@@ -278,7 +278,7 @@ bool HelperEngine::readInputModes(bool* asciiMode, bool* fullShape) {
 }
 
 // Port of shouldPassThroughModifierOnKey().
-bool HelperEngine::shouldPassThroughModifierOnKey(const KeyEventData& e,
+bool DaemonEngine::shouldPassThroughModifierOnKey(const KeyEventData& e,
                                                  bool filterRet) {
   if (filterRet) {
     return false;
@@ -295,7 +295,7 @@ bool HelperEngine::shouldPassThroughModifierOnKey(const KeyEventData& e,
 
 // Port of updateLangStatus(): refresh mode button icons when the engine
 // flipped ascii/full-shape (Shift toggle, schema switches).
-void HelperEngine::appendLangStatusChange(Json::Value& resp, bool ascii,
+void DaemonEngine::appendLangStatusChange(Json::Value& resp, bool ascii,
                                          bool full) {
   if (!asciiKnown_) {
     asciiBefore_ = ascii;
@@ -341,7 +341,7 @@ void HelperEngine::appendLangStatusChange(Json::Value& resp, bool ascii,
 // Port of fillResponseFromBackendState(): commit bookkeeping + rerank
 // pipeline (contextual lift → bigram → mixed pair) + displayPerm + typo
 // hoist, then composition/candidate fields.
-void HelperEngine::buildResponse(const EngineState& state, bool allowCommit,
+void DaemonEngine::buildResponse(const EngineState& state, bool allowCommit,
                                 Json::Value& resp) {
   const RerankConfig& rerankCfg = RerankData::instance().config();
   if (allowCommit && !state.commit.empty()) {
@@ -446,7 +446,7 @@ void HelperEngine::buildResponse(const EngineState& state, bool allowCommit,
   }
 }
 
-bool HelperEngine::handleSecondSelectionFilterDown(const KeyEventData& e,
+bool DaemonEngine::handleSecondSelectionFilterDown(const KeyEventData& e,
                                                   Json::Value& resp) {
   if (!semicolonSelectSecond_ || !isSecondSelectionShortcut(e)) {
     return false;
@@ -461,7 +461,7 @@ bool HelperEngine::handleSecondSelectionFilterDown(const KeyEventData& e,
   return true;
 }
 
-bool HelperEngine::handleSecondSelectionDown(const KeyEventData& e,
+bool DaemonEngine::handleSecondSelectionDown(const KeyEventData& e,
                                             Json::Value& resp) {
   if (secondSelectConsumeKeyUpCode_ == 0 ||
       selectionShortcutConsumeCode(e) != secondSelectConsumeKeyUpCode_) {
@@ -488,7 +488,7 @@ bool HelperEngine::handleSecondSelectionDown(const KeyEventData& e,
   return true;
 }
 
-bool HelperEngine::handleSecondSelectionFilterUp(const KeyEventData& e,
+bool DaemonEngine::handleSecondSelectionFilterUp(const KeyEventData& e,
                                                 Json::Value& resp) {
   if (secondSelectConsumeKeyUpCode_ == 0 ||
       selectionShortcutConsumeCode(e) != secondSelectConsumeKeyUpCode_) {
@@ -498,7 +498,7 @@ bool HelperEngine::handleSecondSelectionFilterUp(const KeyEventData& e,
   return true;
 }
 
-bool HelperEngine::handleSecondSelectionUp(const KeyEventData& e,
+bool DaemonEngine::handleSecondSelectionUp(const KeyEventData& e,
                                           Json::Value& resp) {
   if (secondSelectConsumeKeyUpCode_ == 0 ||
       selectionShortcutConsumeCode(e) != secondSelectConsumeKeyUpCode_) {
@@ -512,7 +512,7 @@ bool HelperEngine::handleSecondSelectionUp(const KeyEventData& e,
   return true;
 }
 
-bool HelperEngine::filterKeyDown(const KeyEventData& e, Json::Value& resp) {
+bool DaemonEngine::filterKeyDown(const KeyEventData& e, Json::Value& resp) {
   RimeRuntime& runtime = RimeRuntime::instance();
   std::lock_guard<std::mutex> lock(runtime.mutex());
 
@@ -545,7 +545,7 @@ bool HelperEngine::filterKeyDown(const KeyEventData& e, Json::Value& resp) {
   return true;
 }
 
-bool HelperEngine::onKeyDown(const KeyEventData& e, Json::Value& resp) {
+bool DaemonEngine::onKeyDown(const KeyEventData& e, Json::Value& resp) {
   RimeRuntime& runtime = RimeRuntime::instance();
   std::lock_guard<std::mutex> lock(runtime.mutex());
 
@@ -568,7 +568,7 @@ bool HelperEngine::onKeyDown(const KeyEventData& e, Json::Value& resp) {
   return true;
 }
 
-bool HelperEngine::filterKeyUp(const KeyEventData& e, Json::Value& resp) {
+bool DaemonEngine::filterKeyUp(const KeyEventData& e, Json::Value& resp) {
   RimeRuntime& runtime = RimeRuntime::instance();
   std::lock_guard<std::mutex> lock(runtime.mutex());
 
@@ -599,7 +599,7 @@ bool HelperEngine::filterKeyUp(const KeyEventData& e, Json::Value& resp) {
   return true;
 }
 
-bool HelperEngine::onKeyUp(const KeyEventData& e, Json::Value& resp) {
+bool DaemonEngine::onKeyUp(const KeyEventData& e, Json::Value& resp) {
   RimeRuntime& runtime = RimeRuntime::instance();
   std::lock_guard<std::mutex> lock(runtime.mutex());
 
@@ -622,7 +622,7 @@ bool HelperEngine::onKeyUp(const KeyEventData& e, Json::Value& resp) {
   return true;
 }
 
-bool HelperEngine::highlightCandidate(int index, Json::Value& resp) {
+bool DaemonEngine::highlightCandidate(int index, Json::Value& resp) {
   if (sessionId_ == 0 || index < 0 || index >= 9) {
     return false;
   }
@@ -640,7 +640,7 @@ bool HelperEngine::highlightCandidate(int index, Json::Value& resp) {
   return true;
 }
 
-bool HelperEngine::selectCandidate(int index, Json::Value& resp) {
+bool DaemonEngine::selectCandidate(int index, Json::Value& resp) {
   if (sessionId_ == 0 || index < 0 || index >= 9) {
     return false;
   }
@@ -657,7 +657,7 @@ bool HelperEngine::selectCandidate(int index, Json::Value& resp) {
   return true;
 }
 
-bool HelperEngine::changePage(bool backward, Json::Value& resp) {
+bool DaemonEngine::changePage(bool backward, Json::Value& resp) {
   if (sessionId_ == 0) {
     return false;
   }
@@ -673,7 +673,7 @@ bool HelperEngine::changePage(bool backward, Json::Value& resp) {
   return true;
 }
 
-void HelperEngine::onCompositionTerminated(bool forced) {
+void DaemonEngine::onCompositionTerminated(bool forced) {
   secondSelectConsumeKeyUpCode_ = 0;
   keyComposing_ = false;
   rawInputTracked_.clear();
@@ -693,7 +693,7 @@ void HelperEngine::onCompositionTerminated(bool forced) {
 
 // ------------------------------------------------ wire method wrappers --
 // onActivate：建会话（tryEngage 的无 TSF 版——helper 永远"已接管"）。
-void HelperEngine::onActivate() {
+void DaemonEngine::onActivate() {
   RimeRuntime& runtime = RimeRuntime::instance();
   if (!runtime.ready() || sessionId_ != 0) {
     return;

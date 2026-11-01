@@ -1,5 +1,5 @@
 //
-//	HelperEngine: per-client engine session for the C++ helper process.
+//	DaemonEngine: per-client engine session for the C++ helper process.
 //	Ported from LocalEngine (TSF DLL) minus all TSF coupling — the helper
 //	is always local and always engaged. Key semantics mirror the Go backend
 //	hot path one-to-one (see docs/24-交接).
@@ -16,9 +16,9 @@
 
 namespace Moqi {
 
-class HelperEngine {
+class DaemonEngine {
 public:
-  HelperEngine();
+  DaemonEngine();
 
   void ensureEngine();     // one-shot runtime init (blocking, first client)
   bool engineReady() const;
