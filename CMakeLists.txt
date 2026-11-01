@@ -2,9 +2,9 @@ cmake_minimum_required(VERSION 3.20)
 project(MoqiDaemon CXX)
 
 set(CMAKE_CXX_STANDARD 20)
-add_definitions(/D_UNICODE=1 /DUNICODE=1 /utf-8)
+add_definitions(/D_UNICODE=1 /DUNICODE=1 /utf-8 /DMOQI_ALLOW_X86_ENGINE)
 
-# 复用 moqi-im-windows 的已验证源码与 jsoncpp（README 记录的耦合点）。
+# Reuse verified sources from moqi-im-windows (coupling documented in README).
 set(MOQI_WIN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../moqi-im-windows")
 set(TS_DIR "${MOQI_WIN_DIR}/MoqiTextService")
 

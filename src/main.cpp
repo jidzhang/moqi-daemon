@@ -203,11 +203,12 @@ int main() {
   Proto::FrameBuffer frames;
   char buf[8192];
   while (true) {
-    size_t got = fread(buf, 1, sizeof(buf), stdin);
-    if (got == 0) {
+    // _read 返回当前可读字节（fread 会等满 8KB 才返回，活管道场景永远等不齐）。
+    int got = _read(_fileno(stdin), buf, sizeof(buf));
+    if (got <= 0) {
       break; // launcher closed stdin -> exit
     }
-    frames.append(buf, got);
+    frames.append(buf, static_cast<size_t>(got));
     string payload;
     while (frames.nextFrame(payload)) {
       Json::Value req;
