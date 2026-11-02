@@ -1,0 +1,1166 @@
+[
+  {
+    "id": 2000,
+    "text": "中文 → 英文",
+    "checked": false,
+    "enabled": true,
+    "submenu": [],
+    "separator": false
+  },
+  {
+    "id": 2001,
+    "text": "半角 → 全角",
+    "checked": false,
+    "enabled": true,
+    "submenu": [],
+    "separator": false
+  },
+  {
+    "id": 2002,
+    "text": "简体 → 繁体",
+    "checked": false,
+    "enabled": true,
+    "submenu": [],
+    "separator": false
+  },
+  {
+    "id": 2003,
+    "text": "翻译关 → 翻译开",
+    "checked": false,
+    "enabled": true,
+    "submenu": [],
+    "separator": false
+  },
+  {
+    "id": 2004,
+    "text": "💀 → 😄",
+    "checked": false,
+    "enabled": true,
+    "submenu": [],
+    "separator": false
+  },
+  {
+    "id": 2005,
+    "text": "拆分不提示 → 拆分提示",
+    "checked": false,
+    "enabled": true,
+    "submenu": [],
+    "separator": false
+  },
+  {
+    "id": 2006,
+    "text": "地 → 煋",
+    "checked": false,
+    "enabled": true,
+    "submenu": [],
+    "separator": false
+  },
+  {
+    "id": 2007,
+    "text": "。， → ．，",
+    "checked": false,
+    "enabled": true,
+    "submenu": [],
+    "separator": false
+  },
+  {
+    "id": 2008,
+    "text": "固顶关 → 固顶开",
+    "checked": false,
+    "enabled": true,
+    "submenu": [],
+    "separator": false
+  },
+  {
+    "id": 0,
+    "text": "",
+    "checked": false,
+    "enabled": true,
+    "submenu": [],
+    "separator": true
+  },
+  {
+    "id": 0,
+    "text": "切换方案集",
+    "checked": false,
+    "enabled": true,
+    "submenu": [
+      {
+        "id": 3000,
+        "text": "Rime",
+        "checked": true,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      },
+      {
+        "id": 3001,
+        "text": "RimeInProc",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      },
+      {
+        "id": 0,
+        "text": "",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": true
+      },
+      {
+        "id": 23,
+        "text": "下载方案集(&D)",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      }
+    ],
+    "separator": false
+  },
+  {
+    "id": 0,
+    "text": "输入方案(&I)",
+    "checked": false,
+    "enabled": true,
+    "submenu": [
+      {
+        "id": 1000,
+        "text": "白霜拼音",
+        "checked": true,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      },
+      {
+        "id": 1001,
+        "text": "白霜自然码双拼",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      },
+      {
+        "id": 1002,
+        "text": "白霜微软双拼",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      },
+      {
+        "id": 1003,
+        "text": "白霜搜狗双拼",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      },
+      {
+        "id": 1004,
+        "text": "白霜小鹤双拼",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      },
+      {
+        "id": 1005,
+        "text": "中文九键",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      },
+      {
+        "id": 1006,
+        "text": "白霜五笔86",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      },
+      {
+        "id": 1007,
+        "text": "白霜|墨奇音形·鹤拼",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      }
+    ],
+    "separator": false
+  },
+  {
+    "id": 18,
+    "text": "打开置顶短语",
+    "checked": false,
+    "enabled": true,
+    "submenu": [],
+    "separator": false
+  },
+  {
+    "id": 19,
+    "text": "打开超级简拼",
+    "checked": false,
+    "enabled": true,
+    "submenu": [],
+    "separator": false
+  },
+  {
+    "id": 17,
+    "text": "更新配置(&P)",
+    "checked": false,
+    "enabled": true,
+    "submenu": [],
+    "separator": false
+  },
+  {
+    "id": 10,
+    "text": "刷新配置(&R)",
+    "checked": false,
+    "enabled": true,
+    "submenu": [],
+    "separator": false
+  },
+  {
+    "id": 0,
+    "text": "",
+    "checked": false,
+    "enabled": true,
+    "submenu": [],
+    "separator": true
+  },
+  {
+    "id": 210,
+    "text": "输入状态共享",
+    "checked": false,
+    "enabled": true,
+    "submenu": [],
+    "separator": false
+  },
+  {
+    "id": 0,
+    "text": "外观(&A)",
+    "checked": false,
+    "enabled": true,
+    "submenu": [
+      {
+        "id": 0,
+        "text": "切换主题",
+        "checked": false,
+        "enabled": true,
+        "submenu": [
+          {
+            "id": 4000,
+            "text": "地球仪",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 4001,
+            "text": "墙灰",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 4002,
+            "text": "墨奇",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 4003,
+            "text": "很有韵味",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 4004,
+            "text": "橘白",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 4005,
+            "text": "橙狗",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 4006,
+            "text": "歪比巴卜",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 4007,
+            "text": "沙城老窖",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 4008,
+            "text": "百事可乐",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 4009,
+            "text": "秦皇岛",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 4010,
+            "text": "老红梅",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 4011,
+            "text": "菊花茶",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 4012,
+            "text": "豆浆杯",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 4013,
+            "text": "默认主题",
+            "checked": true,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          }
+        ],
+        "separator": false
+      },
+      {
+        "id": 100,
+        "text": "行内预编辑",
+        "checked": true,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      },
+      {
+        "id": 0,
+        "text": "候选排列",
+        "checked": false,
+        "enabled": true,
+        "submenu": [
+          {
+            "id": 170,
+            "text": "竖排",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 171,
+            "text": "横排",
+            "checked": true,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          }
+        ],
+        "separator": false
+      },
+      {
+        "id": 0,
+        "text": "每行候选数",
+        "checked": false,
+        "enabled": true,
+        "submenu": [
+          {
+            "id": 180,
+            "text": "3",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 181,
+            "text": "5",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 182,
+            "text": "7",
+            "checked": true,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 183,
+            "text": "9",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          }
+        ],
+        "separator": false
+      },
+      {
+        "id": 0,
+        "text": "候选间距",
+        "checked": false,
+        "enabled": true,
+        "submenu": [
+          {
+            "id": 184,
+            "text": "0",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 185,
+            "text": "10",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 186,
+            "text": "20",
+            "checked": true,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 187,
+            "text": "30",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 188,
+            "text": "40",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 189,
+            "text": "50",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          }
+        ],
+        "separator": false
+      },
+      {
+        "id": 0,
+        "text": "总候选数量",
+        "checked": false,
+        "enabled": true,
+        "submenu": [
+          {
+            "id": 190,
+            "text": "3",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 191,
+            "text": "5",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 192,
+            "text": "7",
+            "checked": true,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 193,
+            "text": "9",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          }
+        ],
+        "separator": false
+      },
+      {
+        "id": 0,
+        "text": "字体大小",
+        "checked": false,
+        "enabled": true,
+        "submenu": [
+          {
+            "id": 113,
+            "text": "8",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 114,
+            "text": "10",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 115,
+            "text": "12",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 116,
+            "text": "14",
+            "checked": true,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 117,
+            "text": "16",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 118,
+            "text": "18",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 119,
+            "text": "20",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 123,
+            "text": "22",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 124,
+            "text": "24",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 125,
+            "text": "26",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 126,
+            "text": "28",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 127,
+            "text": "30",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          }
+        ],
+        "separator": false
+      },
+      {
+        "id": 0,
+        "text": "候选文字字体",
+        "checked": false,
+        "enabled": true,
+        "submenu": [
+          {
+            "id": 194,
+            "text": "Segoe UI",
+            "checked": true,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 195,
+            "text": "微软雅黑 UI",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 196,
+            "text": "等线",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 197,
+            "text": "宋体",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          }
+        ],
+        "separator": false
+      },
+      {
+        "id": 0,
+        "text": "注释文字大小",
+        "checked": false,
+        "enabled": true,
+        "submenu": [
+          {
+            "id": 213,
+            "text": "8",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 214,
+            "text": "10",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 216,
+            "text": "12",
+            "checked": true,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 217,
+            "text": "14",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 218,
+            "text": "16",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 219,
+            "text": "18",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 220,
+            "text": "20",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 221,
+            "text": "22",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 222,
+            "text": "24",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 223,
+            "text": "26",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 224,
+            "text": "28",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 225,
+            "text": "30",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          }
+        ],
+        "separator": false
+      },
+      {
+        "id": 0,
+        "text": "注释文字字体",
+        "checked": false,
+        "enabled": true,
+        "submenu": [
+          {
+            "id": 198,
+            "text": "Consolas",
+            "checked": true,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 199,
+            "text": "微软雅黑 UI",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 200,
+            "text": "等线",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 201,
+            "text": "宋体",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          }
+        ],
+        "separator": false
+      },
+      {
+        "id": 0,
+        "text": "候选框背景",
+        "checked": false,
+        "enabled": true,
+        "submenu": [
+          {
+            "id": 120,
+            "text": "白色",
+            "checked": true,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 121,
+            "text": "暖白",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 122,
+            "text": "浅蓝",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          }
+        ],
+        "separator": false
+      },
+      {
+        "id": 0,
+        "text": "高亮颜色",
+        "checked": false,
+        "enabled": true,
+        "submenu": [
+          {
+            "id": 130,
+            "text": "浅蓝",
+            "checked": true,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 131,
+            "text": "浅灰",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 132,
+            "text": "浅绿",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          }
+        ],
+        "separator": false
+      },
+      {
+        "id": 0,
+        "text": "字体颜色",
+        "checked": false,
+        "enabled": true,
+        "submenu": [
+          {
+            "id": 140,
+            "text": "黑色",
+            "checked": true,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 141,
+            "text": "深灰",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 142,
+            "text": "深蓝",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          }
+        ],
+        "separator": false
+      },
+      {
+        "id": 0,
+        "text": "高亮文字颜色",
+        "checked": false,
+        "enabled": true,
+        "submenu": [
+          {
+            "id": 145,
+            "text": "黑色",
+            "checked": true,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 146,
+            "text": "白色",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 147,
+            "text": "深蓝",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          }
+        ],
+        "separator": false
+      },
+      {
+        "id": 0,
+        "text": "",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": true
+      },
+      {
+        "id": 215,
+        "text": "导入皮肤",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      }
+    ],
+    "separator": false
+  },
+  {
+    "id": 0,
+    "text": "输入设置",
+    "checked": false,
+    "enabled": true,
+    "submenu": [
+      {
+        "id": 220,
+        "text": "自动插入成对符号",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      },
+      {
+        "id": 222,
+        "text": "打开成对符号设置",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      },
+      {
+        "id": 221,
+        "text": "分号键次选",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      }
+    ],
+    "separator": false
+  },
+  {
+    "id": 0,
+    "text": "同步设置",
+    "checked": false,
+    "enabled": true,
+    "submenu": [
+      {
+        "id": 5004,
+        "text": "WebDAV 配置...",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      },
+      {
+        "id": 5003,
+        "text": "测试 WebDAV",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      },
+      {
+        "id": 5002,
+        "text": "启用云剪贴板",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      },
+      {
+        "id": 5001,
+        "text": "云剪贴板设置...",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      },
+      {
+        "id": 11,
+        "text": "同步用户词库",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      }
+    ],
+    "separator": false
+  },
+  {
+    "id": 0,
+    "text": "维护",
+    "checked": false,
+    "enabled": true,
+    "submenu": [
+      {
+        "id": 30,
+        "text": "开启调试",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      },
+      {
+        "id": 32,
+        "text": "重启引擎",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      },
+      {
+        "id": 33,
+        "text": "退出引擎",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      }
+    ],
+    "separator": false
+  },
+  {
+    "id": 0,
+    "text": "打开文件夹(&O)",
+    "checked": false,
+    "enabled": true,
+    "submenu": [
+      {
+        "id": 14,
+        "text": "用户文件夹",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      },
+      {
+        "id": 13,
+        "text": "共享文件夹",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      },
+      {
+        "id": 12,
+        "text": "同步文件夹",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      },
+      {
+        "id": 16,
+        "text": "日志文件夹",
+        "checked": false,
+        "enabled": true,
+        "submenu": [],
+        "separator": false
+      }
+    ],
+    "separator": false
+  },
+  {
+    "id": 0,
+    "text": "",
+    "checked": false,
+    "enabled": true,
+    "submenu": [],
+    "separator": true
+  },
+  {
+    "id": 21,
+    "text": "帮助文档(&H)",
+    "checked": false,
+    "enabled": true,
+    "submenu": [],
+    "separator": false
+  },
+  {
+    "id": 22,
+    "text": "参加讨论(&J)",
+    "checked": false,
+    "enabled": true,
+    "submenu": [],
+    "separator": false
+  }
+]

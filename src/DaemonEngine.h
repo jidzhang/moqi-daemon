@@ -23,6 +23,9 @@ public:
   void ensureEngine();     // one-shot runtime init (blocking, first client)
   bool engineReady() const;
 
+  // 菜单服务需要按会话读选项/方案；引擎所有权仍在 DaemonEngine。
+  rimeapi::SessionId sessionId() const { return sessionId_; }
+
   // 会话生命周期（onActivate = tryEngage 的无 TSF 版）。
   void onActivate();
   void deactivate();

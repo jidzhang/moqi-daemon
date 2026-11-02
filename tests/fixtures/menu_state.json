@@ -1,0 +1,207 @@
+{
+  "switches": [
+    {
+      "name": "opt-2000",
+      "states": [
+        "中文",
+        "英文"
+      ]
+    },
+    {
+      "name": "opt-2001",
+      "states": [
+        "半角",
+        "全角"
+      ]
+    },
+    {
+      "name": "opt-2002",
+      "states": [
+        "简体",
+        "繁体"
+      ]
+    },
+    {
+      "name": "opt-2003",
+      "states": [
+        "翻译关",
+        "翻译开"
+      ]
+    },
+    {
+      "name": "opt-2004",
+      "states": [
+        "💀",
+        "😄"
+      ]
+    },
+    {
+      "name": "opt-2005",
+      "states": [
+        "拆分不提示",
+        "拆分提示"
+      ]
+    },
+    {
+      "name": "opt-2006",
+      "states": [
+        "地",
+        "煋"
+      ]
+    },
+    {
+      "name": "opt-2007",
+      "states": [
+        "。，",
+        "．，"
+      ]
+    },
+    {
+      "name": "opt-2008",
+      "states": [
+        "固顶关",
+        "固顶开"
+      ]
+    }
+  ],
+  "options": {
+    "opt-2000": false,
+    "opt-2001": false,
+    "opt-2002": false,
+    "opt-2003": false,
+    "opt-2004": false,
+    "opt-2005": false,
+    "opt-2006": false,
+    "opt-2007": false,
+    "opt-2008": false
+  },
+  "schemas": [
+    {
+      "id": "schema-0",
+      "name": "白霜拼音",
+      "current": true
+    },
+    {
+      "id": "schema-1",
+      "name": "白霜自然码双拼",
+      "current": false
+    },
+    {
+      "id": "schema-2",
+      "name": "白霜微软双拼",
+      "current": false
+    },
+    {
+      "id": "schema-3",
+      "name": "白霜搜狗双拼",
+      "current": false
+    },
+    {
+      "id": "schema-4",
+      "name": "白霜小鹤双拼",
+      "current": false
+    },
+    {
+      "id": "schema-5",
+      "name": "中文九键",
+      "current": false
+    },
+    {
+      "id": "schema-6",
+      "name": "白霜五笔86",
+      "current": false
+    },
+    {
+      "id": "schema-7",
+      "name": "白霜|墨奇音形·鹤拼",
+      "current": false
+    }
+  ],
+  "schemeSets": [
+    {
+      "name": "Rime",
+      "current": true
+    },
+    {
+      "name": "RimeInProc",
+      "current": false
+    }
+  ],
+  "themes": [
+    {
+      "id": "theme-0",
+      "label": "地球仪"
+    },
+    {
+      "id": "theme-1",
+      "label": "墙灰"
+    },
+    {
+      "id": "theme-2",
+      "label": "墨奇"
+    },
+    {
+      "id": "theme-3",
+      "label": "很有韵味"
+    },
+    {
+      "id": "theme-4",
+      "label": "橘白"
+    },
+    {
+      "id": "theme-5",
+      "label": "橙狗"
+    },
+    {
+      "id": "theme-6",
+      "label": "歪比巴卜"
+    },
+    {
+      "id": "theme-7",
+      "label": "沙城老窖"
+    },
+    {
+      "id": "theme-8",
+      "label": "百事可乐"
+    },
+    {
+      "id": "theme-9",
+      "label": "秦皇岛"
+    },
+    {
+      "id": "theme-10",
+      "label": "老红梅"
+    },
+    {
+      "id": "theme-11",
+      "label": "菊花茶"
+    },
+    {
+      "id": "theme-12",
+      "label": "豆浆杯"
+    },
+    {
+      "id": "theme-13",
+      "label": "默认主题"
+    }
+  ],
+  "theme": "theme-13",
+  "inlinePreedit": true,
+  "horizontal": true,
+  "perRow": 7,
+  "spacing": 20,
+  "candCount": 7,
+  "fontPoint": 14,
+  "commentFontPoint": 12,
+  "fontFace": "Segoe UI",
+  "commentFontFace": "Consolas",
+  "bgColor": "#ffffff",
+  "hlColor": "#c6ddf9",
+  "textColor": "#000000",
+  "hlTextColor": "#000000",
+  "inputStateShared": false,
+  "autoPairQuotes": false,
+  "semicolonSecond": false,
+  "cloudEnabled": false,
+  "launcherDebug": false
+}

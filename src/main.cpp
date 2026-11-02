@@ -8,6 +8,8 @@
 //
 #include "ChildProxy.h"
 #include "DaemonEngine.h"
+#include "DaemonMenuCore.h"
+#include "DaemonMenuService.h"
 #include "ProtoFraming.h"
 #include "RimeCore.h"
 
@@ -88,6 +90,7 @@ map<string, ClientEntry> g_clients;
 // 本进程 stdout 由主线程与子进程读线程并发写，必须串行化。
 CRITICAL_SECTION g_stdoutLock;
 ChildProxy* g_proxy = nullptr;
+DaemonMenuService* g_menu = nullptr;
 
 void writeFramed(const std::string& framed) {
   ::EnterCriticalSection(&g_stdoutLock);
@@ -254,6 +257,12 @@ int main() {
   ChildProxy proxy(g_daemonProgramDir + L"\\moqi-ime\\MoqiIME.exe",
                    g_daemonProgramDir + L"\\moqi-ime", &writeFramed);
   g_proxy = &proxy;
+  // 阶段 5b：菜单树与本地命令由 daemon 自建（黄金锁定，见 tests/）；
+  // 网络/方案集类命令仍代理 Go。
+  DaemonMenuService menu(g_daemonProgramDir,
+                         g_daemonProgramDir + L"\\moqi-ime\\input_methods\\rime\\data",
+                         L"");
+  g_menu = &menu;
   if (proxy.available()) {
     proxy.ensureStarted();
     daemonLog(L"moqi-daemon start (Go child warm)");
@@ -278,6 +287,58 @@ int main() {
         return 1;
       }
       const string method = req.get("method", "").asString();
+
+      // 5b：菜单本地作答（树=黄金）；命令本地集合就地执行，其余代理 Go。
+      if (method == "METHOD_ON_MENU") {
+        ClientEntry& entry = clientFor(req);
+        entry.engine.ensureEngine();
+        Json::Value resp(Json::objectValue);
+        resp["success"] = true;
+        resp["seqNum"] = req.get("seqNum", 0);
+        resp["returnValue"] = 1;
+        if (g_menu != nullptr) {
+          resp["menuItems"] = Menu::buildMenu(
+              g_menu->gather(entry.engine));
+        }
+        resp["clientId"] = req.get("clientId", "");
+        string framed;
+        if (Proto::serializeJsonMessage(resp, framed)) {
+          writeFramed(framed);
+        }
+        continue;
+      }
+      if (method == "METHOD_ON_COMMAND") {
+        const int cmdId = req.get("commandId", 0).asInt();
+        if (g_menu != nullptr && Menu::isLocalCommandId(cmdId) && cmdId != 0) {
+          ClientEntry& entry = clientFor(req);
+          entry.engine.ensureEngine();
+          Menu::MenuState st = g_menu->gather(entry.engine);
+          Menu::CommandResult cr = Menu::handleCommand(cmdId, st);
+          if (cr.action == Menu::CmdAction::Local && cr.ok) {
+            g_menu->applyEngine(entry.engine, cr);
+            if (cmdId >= Menu::ID_APPEARANCE_THEME_BASE) {
+              g_menu->applyThemeColors(st);
+            }
+            g_menu->persistAppearance(st);
+            g_menu->openCommandTarget(cmdId);
+            Json::Value resp(Json::objectValue);
+            resp["success"] = true;
+            resp["seqNum"] = req.get("seqNum", 0);
+            resp["returnValue"] = 1;
+            if (cr.customizeUi.isObject() && !cr.customizeUi.empty()) {
+              resp["customizeUi"] = cr.customizeUi;
+            }
+            resp["clientId"] = req.get("clientId", "");
+            string framed;
+            if (Proto::serializeJsonMessage(resp, framed)) {
+              writeFramed(framed);
+            }
+            continue;
+          }
+        }
+        // 未接管（网络/方案集/未知）→ 落到代理路径
+      }
+
       const Action action = actionFor(method);
 
       // init/onActivate：本地引擎状态照常建立，但响应透传 Go 的
