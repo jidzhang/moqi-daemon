@@ -18,6 +18,7 @@ add_executable(MoqiDaemon
   src/ChildProxy.h
   src/DaemonEngine.cpp
   src/DaemonEngine.h
+  src/MoqiDaemon.rc
   "${TS_DIR}/RimeCore.cpp"
   "${TS_DIR}/RimeCore.h"
   "${TS_DIR}/LocalRerank.cpp"

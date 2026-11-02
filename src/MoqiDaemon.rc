@@ -1,0 +1,13 @@
+// MoqiDaemon resource script: application icon (moqi logo) only.
+// Numeric icon ID 1 (lowest) = the exe's app icon shown in Task Manager.
+// Keep this file pure ASCII (code_page pragma below only guards the path).
+#pragma code_page(65001)
+
+#include <winresrc.h>
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+1 ICON "MoqiDaemon.ico"
