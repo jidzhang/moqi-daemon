@@ -22,6 +22,8 @@ add_executable(MoqiDaemon
   src/DaemonMenuCore.h
   src/DaemonMenuService.cpp
   src/DaemonMenuService.h
+  src/PipeServe.cpp
+  src/PipeServe.h
   src/MoqiDaemon.rc
   "${TS_DIR}/RimeCore.cpp"
   "${TS_DIR}/RimeCore.h"
@@ -37,6 +39,21 @@ target_compile_definitions(daemon_menu_test PRIVATE
   TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
 target_link_libraries(daemon_menu_test jsoncpp_static)
 add_test(NAME daemon_menu_test COMMAND daemon_menu_test)
+
+# 引擎级回归：shima 错字提顶后的显示/提交一致性（需 x86 rime.dll 布局，
+# 环境变量由 ctest 注入；无环境时测试自跳过）。
+add_executable(daemon_engine_desync_test
+  tests/daemon_engine_desync_test.cpp
+  src/DaemonEngine.cpp
+  "${TS_DIR}/RimeCore.cpp"
+  "${TS_DIR}/LocalRerank.cpp")
+target_include_directories(daemon_engine_desync_test PRIVATE
+  src "${TS_DIR}" "${MOQI_WIN_DIR}" "${MOQI_WIN_DIR}/proto"
+  "${MOQI_WIN_DIR}/jsoncpp/include")
+target_link_libraries(daemon_engine_desync_test jsoncpp_static)
+add_test(NAME daemon_engine_desync_test COMMAND daemon_engine_desync_test)
+set_tests_properties(daemon_engine_desync_test PROPERTIES
+  ENVIRONMENT "MOQI_PROGRAM_DIR=C:/work/moqi-daemon-full;MOQI_RIME_DLL_DIR=C:/work/moqi-daemon-full")
 
 target_include_directories(MoqiDaemon PRIVATE
   src

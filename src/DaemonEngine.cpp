@@ -7,6 +7,11 @@
 #include <algorithm>
 #include <fstream>
 
+namespace Moqi {
+// main.cpp 共用的轻量日志（临时探针用；见 processKey 内 [remap] 标记）。
+void daemonLogExtern(const std::wstring& msg);
+}
+
 using namespace std;
 
 namespace Moqi {
@@ -214,7 +219,9 @@ bool DaemonEngine::processKey(const KeyEventData& e, bool isUp, bool* ret) {
   // 必须换算成引擎索引再发给引擎（否则按 2 选错词——历史实报教训）。
   UINT effKeyCode = e.keyCode;
   UINT effCharCode = e.charCode;
-  if (!isUp && mask == 0 && keyComposing_ && !displayPerm_.empty()) {
+  if (!isUp && mask == 0 && keyComposing_) {
+    daemonLogExtern(L"[remap] composing key=" + to_wstring(e.keyCode) +
+                    L" permSize=" + to_wstring(displayPerm_.size()));
     int target = -1;
     if (effKeyCode == vkSpace) {
       target = 0;
@@ -223,6 +230,8 @@ bool DaemonEngine::processKey(const KeyEventData& e, bool isUp, bool* ret) {
     }
     if (target >= 0 && target < static_cast<int>(displayPerm_.size())) {
       const int engineIdx = displayPerm_[target];
+      daemonLogExtern(L"[remap] target=" + to_wstring(target) +
+                      L" engineIdx=" + to_wstring(engineIdx));
       if (engineIdx != target && engineIdx >= 0 &&
           engineIdx < candidateCount_) {
         effKeyCode = static_cast<UINT>('1') + engineIdx;
@@ -415,6 +424,21 @@ void DaemonEngine::buildResponse(const EngineState& state, bool allowCommit,
           const Cand item = cands[i];
           cands.erase(cands.begin() + static_cast<long>(i));
           cands.insert(cands.begin(), item);
+          // 2026-11-02 修复：提顶改了显示顺序，displayPerm 必须同步旋转
+          //（与 LocalEngine 同修复；否则空格/数字按提顶前映射选错词）。
+          // 注意 buildDisplayPerm 在"同序"时返回空（=恒等映射）——提顶
+          // 恰恰打破恒等，必须显式生成旋转后的映射，而不是对空表旋转。
+          if (displayPerm_.empty()) {
+            displayPerm_.resize(cands.size());
+            for (size_t k = 0; k < cands.size(); ++k) {
+              displayPerm_[k] = static_cast<int>(k);
+            }
+          }
+          if (i < displayPerm_.size()) {
+            const int picked = displayPerm_[i];
+            displayPerm_.erase(displayPerm_.begin() + static_cast<long>(i));
+            displayPerm_.insert(displayPerm_.begin(), picked);
+          }
           break;
         }
       }
