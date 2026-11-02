@@ -88,6 +88,16 @@ struct PipeServe::Impl {
     ::EnterCriticalSection(&clientsLock);
     auto it = clients.find(id);
     if (it != clients.end()) h = it->second;
+    if (h == INVALID_HANDLE_VALUE) {
+      std::wstring dump;
+      for (const auto& kv : clients) {
+        dump += L" [" + std::wstring(kv.first.begin(), kv.first.end()) + L"]";
+      }
+      daemonLogExtern(L"[serve] sendTo lookup '" +
+                      std::wstring(id.begin(), id.end()) +
+                      L"' registry size=" + std::to_wstring(clients.size()) +
+                      L" keys:" + dump);
+    }
     ::LeaveCriticalSection(&clientsLock);
     if (h == INVALID_HANDLE_VALUE) return false;
     return writeAll(h, framed.data(), framed.size());
