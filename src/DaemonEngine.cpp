@@ -1,4 +1,4 @@
-//
+﻿//
 //	DaemonEngine.cpp: per-client session logic ported verbatim from
 //	LocalEngine.cpp (phase 5) with the TSF coupling removed.
 //
@@ -43,6 +43,148 @@ bool DaemonEngine::engineReady() const {
 
 
 DaemonEngine::DaemonEngine() {}
+DaemonEngine::~DaemonEngine() {
+  if (aiWorker_.joinable()) {
+    aiWorker_.join();
+  }
+}
+
+// ---------------------------------------------------------------- AI ------
+
+void DaemonEngine::resetAIState() {
+  std::lock_guard<std::mutex> lock(aiResultLock_);
+  aiState_.active = false;
+  aiState_.candidates.clear();
+  aiState_.cursor = 0;
+  aiState_.prompt.clear();
+}
+
+// 热键触发：读配置 → 匹配 action → 后台 HTTP。返回 true = 键被消费。
+bool DaemonEngine::maybeTriggerAI(const KeyEventData &e,
+                                  std::function<void(Json::Value)> push) {
+  if (!aiState_.client.load()) {
+    return false;
+  }
+  // 修饰键位来自 keyStates（VK_CONTROL/VK_SHIFT/VK_MENU）。
+  const BYTE *states = e.keyStates;
+  const bool ctrl = states && ((states[VK_CONTROL] & 0x80) != 0);
+  const bool alt = states && ((states[VK_MENU] & 0x80) != 0);
+  const bool shift = states && ((states[VK_SHIFT] & 0x80) != 0);
+  const AIAction *action = aiState_.client.match(e.keyCode, ctrl, alt, shift);
+  if (action == nullptr) {
+    return false;
+  }
+  if (aiState_.pending.load()) {
+    return true; // 在途去重（与 Go 一致：连按不重复计费）
+  }
+
+  bool engineOk = false;
+  const EngineState state = currentState(&engineOk);
+  std::vector<std::string> inputCandidates;
+  for (const auto &cand : state.candidates) {
+    if (inputCandidates.size() >= 3) break;
+    inputCandidates.push_back(cand.first);
+  }
+  if (state.composition.empty() && inputCandidates.empty()) {
+    return false; // 无组字也无候选：不消费（键交还宿主）
+  }
+
+  const long long seq = ++aiState_.requestSeq;
+  aiState_.pending.store(true);
+  aiState_.active = false;
+  {
+    std::lock_guard<std::mutex> lock(aiResultLock_);
+    aiState_.prompt = state.composition;
+    aiState_.candidates.clear();
+    aiState_.cursor = 0;
+    aiState_.error.clear();
+  }
+
+  const AIAction actionCopy = *action;
+  const std::string composition = state.composition;
+  const std::string previousCommit = aiState_.previousCommit;
+  if (aiWorker_.joinable()) {
+    aiWorker_.join(); // 上一轮已结束（pending 保证同一时刻只有一个）
+  }
+  aiWorker_ = std::thread([this, actionCopy, composition, inputCandidates,
+                           previousCommit, seq, push]() {
+    std::vector<std::string> result;
+    std::string err;
+    const bool ok = aiState_.client.generate(actionCopy, composition,
+                                             inputCandidates, previousCommit,
+                                             &result, &err);
+    Json::Value update;
+    {
+      std::lock_guard<std::mutex> lock(aiResultLock_);
+      if (seq != aiState_.requestSeq.load()) {
+        aiState_.pending.store(false);
+        return; // 过期结果丢弃
+      }
+      aiState_.pending.store(false);
+      if (!ok) {
+        aiState_.error = err;
+        aiState_.active = false;
+        return;
+      }
+      aiState_.candidates = std::move(result);
+      aiState_.cursor = 0;
+      aiState_.active = !aiState_.candidates.empty();
+      if (!aiState_.active) return;
+      // 主动推一条候选更新（等价 Go 的 asyncResponseSender）：DLL 收到后
+      // 立即刷新候选窗，无需等下一次按键。
+      update = Json::Value(Json::objectValue);
+      update["success"] = true;
+      update["seqNum"] = 0; // 异步更新（不与任何同步请求配对）
+      update["returnValue"] = 1;
+      Json::Value entries(Json::arrayValue);
+      for (const auto &text : aiState_.candidates) {
+        Json::Value item(Json::objectValue);
+        item["text"] = text;
+        entries.append(item);
+      }
+      update["candidateEntries"] = entries;
+      update["candidateList"] = Json::Value(Json::arrayValue);
+      update["showCandidates"] = true;
+      update["candidateCursor"] = 0;
+      update["compositionString"] = aiState_.prompt;
+      update["compositionCursor"] =
+          static_cast<Json::Int>(aiState_.prompt.size());
+    }
+    if (push) {
+      daemonLogExtern(L"[ai] pushing candidate update n=" +
+                      std::to_wstring(update["candidateEntries"].size()));
+      push(update);
+    } else {
+      daemonLogExtern(L"[ai] no push sink (result only in overlay)");
+    }
+  });
+  return true;
+}
+
+// 选中 AI 覆盖层第 index 个候选并上屏（清空引擎组字）。
+bool DaemonEngine::commitAICandidate(int index, Json::Value &resp) {
+  std::lock_guard<std::mutex> lock(aiResultLock_);
+  if (!aiState_.active || index < 0 ||
+      index >= static_cast<int>(aiState_.candidates.size())) {
+    return false;
+  }
+  const std::string commit = aiState_.candidates[index];
+  resp["success"] = true;
+  resp["returnValue"] = 1;
+  resp["commitString"] = commit;
+  resp["compositionString"] = "";
+  resp["candidateList"] = Json::Value(Json::arrayValue);
+  resp["candidateEntries"] = Json::Value(Json::arrayValue);
+  resp["showCandidates"] = false;
+  aiState_.active = false;
+  aiState_.candidates.clear();
+  RimeRuntime &runtime = RimeRuntime::instance();
+  if (sessionId_ != 0 && runtime.rimeClearComposition != nullptr) {
+    runtime.rimeClearComposition(sessionId_);
+  }
+  aiState_.previousCommit = commit;
+  return true;
+}
 
 void DaemonEngine::deactivate() {
   if (sessionId_ == 0) {
@@ -446,6 +588,15 @@ void DaemonEngine::buildResponse(const EngineState& state, bool allowCommit,
   }
 
   Json::Value entries(Json::arrayValue);
+  // 阶段5c AI 覆盖层：AI 候选置顶（与 Go fillAIResponse 的叠加顺序一致）。
+  if (aiState_.active) {
+    std::lock_guard<std::mutex> aiLock(aiResultLock_);
+    for (const auto &text : aiState_.candidates) {
+      Json::Value item(Json::objectValue);
+      item["text"] = text;
+      entries.append(item);
+    }
+  }
   for (const auto& cand : cands) {
     Json::Value item;
     item["text"] = cand.first;
@@ -455,6 +606,9 @@ void DaemonEngine::buildResponse(const EngineState& state, bool allowCommit,
     entries.append(item);
   }
   resp["candidateEntries"] = entries;
+  if (aiState_.active) {
+    resp["candidateCursor"] = aiState_.cursor;
+  }
   if (cursor < 0) {
     cursor = 0;
   } else if (cursor >= static_cast<int>(cands.size())) {
@@ -541,9 +695,32 @@ bool DaemonEngine::handleSecondSelectionUp(const KeyEventData& e,
   return true;
 }
 
-bool DaemonEngine::filterKeyDown(const KeyEventData& e, Json::Value& resp) {
+bool DaemonEngine::filterKeyDown(const KeyEventData& e, Json::Value& resp,
+                                 std::function<void(Json::Value)> push) {
   RimeRuntime& runtime = RimeRuntime::instance();
   std::lock_guard<std::mutex> lock(runtime.mutex());
+
+  // 阶段5c AI：结果覆盖期间，选择键/空格/回车/ESC/上下箭头由 AI 消费；
+  // 其他键退出覆盖并正常走引擎（与 Go handleAIKeyDownFilter 一致）。
+  if (aiState_.active) {
+    const bool isSel = e.keyCode >= '1' && e.keyCode <= '9';
+    const bool handled = isSel || e.keyCode == vkSpace ||
+                         e.keyCode == vkReturn || e.keyCode == vkEscape ||
+                         e.keyCode == vkUp || e.keyCode == vkDown;
+    if (handled) {
+      lastKeyDownRet_ = true;
+      resp["returnValue"] = 1;
+      return true;
+    }
+    resetAIState();
+  }
+  // 热键触发（Ctrl+Shift+X 等）；无组字/候选时不消费，键交还宿主。
+  if (maybeTriggerAI(e, push)) {
+    lastKeyDownRet_ = true;
+    lastKeyUpCode_ = 0;
+    resp["returnValue"] = 1;
+    return true;
+  }
 
   if (handleSecondSelectionFilterDown(e, resp)) {
     return true;
@@ -577,6 +754,47 @@ bool DaemonEngine::filterKeyDown(const KeyEventData& e, Json::Value& resp) {
 bool DaemonEngine::onKeyDown(const KeyEventData& e, Json::Value& resp) {
   RimeRuntime& runtime = RimeRuntime::instance();
   std::lock_guard<std::mutex> lock(runtime.mutex());
+
+  // 阶段5c AI 覆盖层：数字/空格/回车提交 AI 候选；上下移动光标；ESC 退出。
+  if (aiState_.active) {
+    int target = -1;
+    if (e.keyCode == vkSpace || e.keyCode == vkReturn) {
+      target = aiState_.cursor;
+    } else if (e.keyCode >= '1' && e.keyCode <= '9') {
+      target = static_cast<int>(e.keyCode) - '1';
+    }
+    if (target >= 0) {
+      if (commitAICandidate(target, resp)) {
+        return true;
+      }
+      resp["returnValue"] = 1;
+      return true;
+    }
+    if (e.keyCode == vkUp || e.keyCode == vkDown) {
+      std::lock_guard<std::mutex> aiLock(aiResultLock_);
+      const int n = static_cast<int>(aiState_.candidates.size());
+      if (e.keyCode == vkUp && aiState_.cursor > 0) {
+        --aiState_.cursor;
+      } else if (e.keyCode == vkDown && aiState_.cursor + 1 < n) {
+        ++aiState_.cursor;
+      }
+      bool engineOk = false;
+      const EngineState state = currentState(&engineOk);
+      buildResponse(state, false, resp);
+      resp["returnValue"] = 1;
+      return true;
+    }
+    if (e.keyCode == vkEscape) {
+      resetAIState();
+      resp["returnValue"] = 1;
+      resp["compositionString"] = "";
+      resp["candidateList"] = Json::Value(Json::arrayValue);
+      resp["candidateEntries"] = Json::Value(Json::arrayValue);
+      resp["showCandidates"] = false;
+      return true;
+    }
+    resetAIState();
+  }
 
   if (handleSecondSelectionDown(e, resp)) {
     return true;

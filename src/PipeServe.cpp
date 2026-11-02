@@ -1,4 +1,4 @@
-// 阶段 5c：daemon 管道服务实现。语义对齐 MoqiLaunch 的 PipeServer：
+﻿// 阶段 5c：daemon 管道服务实现。语义对齐 MoqiLaunch 的 PipeServer：
 // - 管道名 \\.\pipe\<用户>\MoqiIM\Launcher（用户名入路径防多用户冲突）
 // - 多实例顺序接受，每客户端一读线程
 // - 每连接分配 clientId（UUID），注入每个上行帧
@@ -8,6 +8,7 @@
 #include "RimeCore.h"
 
 #include <lmcons.h>
+#include <sddl.h>
 
 #include <functional>
 #include <map>
@@ -110,6 +111,7 @@ struct ClientConn {
   HANDLE pipe;
   std::string clientId;
   PipeServe::Impl* serve;
+  std::shared_ptr<std::mutex> writeLock; // 同连接多线程写（同步回包/异步推送）
 };
 
 DWORD WINAPI clientThread(LPVOID self) {
@@ -117,6 +119,7 @@ DWORD WINAPI clientThread(LPVOID self) {
   const HANDLE pipe = conn->pipe;
   const std::string clientId = conn->clientId;
   PipeServe::Impl* serve = conn->serve;
+  auto writeLock = conn->writeLock;
 
   Proto::FrameBuffer frames;
   char buf[8192];
@@ -138,7 +141,8 @@ DWORD WINAPI clientThread(LPVOID self) {
         wb["commentStyle"] = "None";
         wb["indentation"] = "";
         const std::string withId = Json::writeString(wb, req);
-        MoqiServeDispatch(withId, [pipe](const std::string& framed) {
+        MoqiServeDispatch(withId, [pipe, writeLock](const std::string& framed) {
+          std::lock_guard<std::mutex> wl(*writeLock);
           writeAll(pipe, framed.data(), framed.size());
         });
       } catch (const std::exception& e) {
@@ -214,6 +218,18 @@ int PipeServe::run() {
        ::GetLastError() == ERROR_ALREADY_EXISTS);
 
   bool firstInstance = true;
+  // 2026-11-02 部署缺陷修复：安装器以管理员身份拉起 daemon 时，管道会继承
+  // 高完整性标签，普通权限应用（TSF DLL）连接被拒（实测 CONNECT gle=5）。
+  // 显式给 DACL 全员访问 + 强制中完整性标签——管道名已按用户名隔离，
+  // 跨用户仍不可达。
+  SECURITY_ATTRIBUTES sa = {};
+  PSECURITY_DESCRIPTOR sd = nullptr;
+  if (::ConvertStringSecurityDescriptorToSecurityDescriptorW(
+          L"D:(A;;GA;;;WD)S:(ML;;NW;;;ME)", SDDL_REVISION_1, &sd, nullptr)) {
+    sa.nLength = sizeof(sa);
+    sa.lpSecurityDescriptor = sd;
+    sa.bInheritHandle = FALSE;
+  }
   for (;;) {
     if (impl_->stopRequested) break;
     // FIRST_PIPE_INSTANCE 只在首个实例上用：它要求名字尚不存在——
@@ -224,7 +240,8 @@ int PipeServe::run() {
         impl_->pipeName.c_str(),
         PIPE_ACCESS_DUPLEX | firstFlag,
         PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-        PIPE_UNLIMITED_INSTANCES, 64 * 1024, 64 * 1024, 0, nullptr);
+        PIPE_UNLIMITED_INSTANCES, 64 * 1024, 64 * 1024, 0,
+        sd != nullptr ? &sa : nullptr);
     if (pipe == INVALID_HANDLE_VALUE) {
       if (firstInstance && alreadyRunning) {
         daemonLogExtern(L"[serve] another instance owns the pipe; exiting");
@@ -244,6 +261,7 @@ int PipeServe::run() {
     conn->pipe = pipe;
     conn->clientId = newClientId();
     conn->serve = impl_;
+    conn->writeLock = std::make_shared<std::mutex>();
     impl_->registerClient(conn->clientId, pipe);
     daemonLogExtern(L"[serve] client connected: " +
                     std::wstring(conn->clientId.begin(),

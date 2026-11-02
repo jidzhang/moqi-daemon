@@ -9,8 +9,12 @@
 
 #include "RimeCore.h"
 #include "LocalRerank.h"
+#include "DaemonAI.h"
 
+#include <atomic>
+#include <functional>
 #include <string>
+#include <thread>
 #include <vector>
 #include <json/json.h>
 
@@ -19,6 +23,7 @@ namespace Moqi {
 class DaemonEngine {
 public:
   DaemonEngine();
+  ~DaemonEngine();
 
   void ensureEngine();     // one-shot runtime init (blocking, first client)
   bool engineReady() const;
@@ -30,7 +35,8 @@ public:
   void onActivate();
   void deactivate();
   // 按键/候选方法与 LocalEngine 同签名（KeyEventData 输入）。
-  bool filterKeyDown(const KeyEventData& e, Json::Value& resp);
+  bool filterKeyDown(const KeyEventData& e, Json::Value& resp,
+                     std::function<void(Json::Value)> push = nullptr);
   bool onKeyDown(const KeyEventData& e, Json::Value& resp);
   bool filterKeyUp(const KeyEventData& e, Json::Value& resp);
   bool onKeyUp(const KeyEventData& e, Json::Value& resp);
@@ -38,6 +44,19 @@ public:
   bool selectCandidate(int index, Json::Value& resp);
   bool changePage(bool backward, Json::Value& resp);
   void onCompositionTerminated(bool forced);
+
+  // ---- 阶段5c：AI 评审（Go rime.go AI 分支的对应实现）----
+  // 热键按下时触发后台请求；结果到齐后 aiActive=true，候选窗顶部显示
+  // AI 结果，选中即上屏。返回 true = 该键已被 AI 消费。
+  // push：结果到达时把候选更新响应主动推给客户端（Go 的 asyncResponseSender
+  // 等价物；缺它候选窗要等下一次按键才刷新）。
+  bool maybeTriggerAI(const KeyEventData& e,
+                      std::function<void(Json::Value)> push);
+  // 选中 AI 候选（index 为 AI 覆盖层的位次）。
+  bool commitAICandidate(int index, Json::Value& resp);
+  void resetAIState();
+  bool aiActive() const { return aiState_.active; }
+  bool aiPending() const { return aiState_.pending.load(); }
 
 private:
   struct EngineState {
@@ -89,8 +108,24 @@ private:
   std::string rawInputAtCommit_;
   std::vector<int> displayPerm_;
   std::vector<BYTE> keyStatesBuf_; // KeyEventData backing store per call
+
+  // ---- AI 状态（对齐 Go：seq 丢弃过期结果 / pending 去重 / active 覆盖）----
+  struct AIState {
+    std::atomic<bool> pending{false};
+    std::atomic<long long> requestSeq{0};
+    bool active = false;
+    std::string prompt;                  // 触发时的组字串（比对是否已变化）
+    std::vector<std::string> candidates; // AI 结果（显示在候选窗顶部）
+    int cursor = 0;
+    std::string error;
+    std::string previousCommit; // 上文（{{previous_commit}}）
+    DaemonAI client;
+  } aiState_;
+  std::mutex aiResultLock_;
+  std::thread aiWorker_;
 };
 
 } // namespace Moqi
 
 #endif // MOQI_HELPER_ENGINE_H_
+

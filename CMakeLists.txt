@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+﻿cmake_minimum_required(VERSION 3.20)
 project(MoqiDaemon CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -16,6 +16,8 @@ add_executable(MoqiDaemon
   src/main.cpp
   src/ChildProxy.cpp
   src/ChildProxy.h
+  src/DaemonAI.cpp
+  src/DaemonAI.h
   src/DaemonEngine.cpp
   src/DaemonEngine.h
   src/DaemonMenuCore.cpp
@@ -44,6 +46,8 @@ add_test(NAME daemon_menu_test COMMAND daemon_menu_test)
 # 环境变量由 ctest 注入；无环境时测试自跳过）。
 add_executable(daemon_engine_desync_test
   tests/daemon_engine_desync_test.cpp
+  src/DaemonAI.cpp
+  src/DaemonAI.h
   src/DaemonEngine.cpp
   "${TS_DIR}/RimeCore.cpp"
   "${TS_DIR}/LocalRerank.cpp")

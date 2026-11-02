@@ -231,7 +231,8 @@ void executeLauncherCommands(int cmdId) {
   }
 }
 
-void dispatch(const Json::Value& req, Json::Value& resp) {
+void dispatch(const Json::Value& req, Json::Value& resp,
+              std::function<void(Json::Value)> push = nullptr) {
   const string method = req.get("method", "").asString();
   const Json::Value& keyEvent = req["keyEvent"];
   vector<BYTE> states;
@@ -263,7 +264,7 @@ void dispatch(const Json::Value& req, Json::Value& resp) {
   }
   if (method == "METHOD_FILTER_KEY_DOWN") {
     Json::Value payload;
-    if (engine.filterKeyDown(e, payload)) {
+    if (engine.filterKeyDown(e, payload, push)) {
       payload["success"] = true;
       payload["seqNum"] = resp["seqNum"];
       resp = payload;
@@ -420,7 +421,17 @@ void dispatchRequest(const string& payload,
   }
 
   Json::Value resp;
-  dispatch(req, resp);
+  // AI 异步结果推动：把更新帧补上 clientId 后走同一回包出口
+  //（serve 模式回写到该客户端管道；stdin 模式写 stdout）。
+  const string pushClientId = req.get("clientId", "").asString();
+  auto pushToClient = [reply, pushClientId](Json::Value update) {
+    update["clientId"] = pushClientId;
+    string framed;
+    if (Proto::serializeJsonMessage(update, framed)) {
+      reply(framed);
+    }
+  };
+  dispatch(req, resp, pushToClient);
   resp["clientId"] = req.get("clientId", "");
   string framed;
   if (Proto::serializeJsonMessage(resp, framed)) {
