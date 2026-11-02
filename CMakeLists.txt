@@ -14,6 +14,8 @@ add_subdirectory("${MOQI_WIN_DIR}/jsoncpp" jsoncpp EXCLUDE_FROM_ALL)
 
 add_executable(MoqiDaemon
   src/main.cpp
+  src/ChildProxy.cpp
+  src/ChildProxy.h
   src/DaemonEngine.cpp
   src/DaemonEngine.h
   "${TS_DIR}/RimeCore.cpp"

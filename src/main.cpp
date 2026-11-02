@@ -6,6 +6,7 @@
 //	(menus/AI/cloud clipboard) return success-empty by design (user
 //	2026-11-01: 用不到的接口不写，Go 代码保留可随时切回).
 //
+#include "ChildProxy.h"
 #include "DaemonEngine.h"
 #include "ProtoFraming.h"
 #include "RimeCore.h"
@@ -83,6 +84,62 @@ struct ClientEntry {
 };
 
 map<string, ClientEntry> g_clients;
+
+// 本进程 stdout 由主线程与子进程读线程并发写，必须串行化。
+CRITICAL_SECTION g_stdoutLock;
+ChildProxy* g_proxy = nullptr;
+
+void writeFramed(const std::string& framed) {
+  ::EnterCriticalSection(&g_stdoutLock);
+  fwrite(framed.data(), 1, framed.size(), stdout);
+  fflush(stdout);
+  ::LeaveCriticalSection(&g_stdoutLock);
+}
+
+// 分发动作：热方法本地答；冷方法原样转 Go；状态方法本地答 + 镜像给 Go
+// （镜像帧 clientId 加 dm-drop: 前缀——启动器按 clientId 路由回包，找不到
+// 客户端即丢弃，Go 侧状态得以建立而陈旧响应不会污染 DLL）。
+// init/onActivate 走 ProxyWait：addButton/selKeys/customizeUi 由 Go 生成，
+// 必须把 Go 的响应原样透传给 DLL（本地引擎状态照常建立，本地响应丢弃）。
+enum class Action { Local, Proxy, LocalAndMirror, ProxyWait };
+
+bool isKeyMethod(const string& m) {
+  return m == "METHOD_FILTER_KEY_DOWN" || m == "METHOD_ON_KEY_DOWN" ||
+         m == "METHOD_FILTER_KEY_UP" || m == "METHOD_ON_KEY_UP" ||
+         m == "METHOD_HIGHLIGHT_CANDIDATE" ||
+         m == "METHOD_SELECT_CANDIDATE" || m == "METHOD_CHANGE_PAGE";
+}
+
+Action actionFor(const string& m) {
+  if (isKeyMethod(m)) {
+    return Action::Local;
+  }
+  if (m == "METHOD_INIT" || m == "METHOD_ON_ACTIVATE") {
+    return Action::ProxyWait;
+  }
+  if (m == "METHOD_ON_DEACTIVATE" || m == "METHOD_CLOSE" ||
+      m == "METHOD_ON_COMPOSITION_TERMINATED") {
+    return Action::LocalAndMirror;
+  }
+  // ON_COMMAND/ON_MENU/PRESERVED_KEY/COMPARTMENT/KEYBOARD_STATUS/
+  // CLOUD_CLIPBOARD_UPLOAD 及未知方法：Go 实现（菜单/AI/云剪贴板）。
+  return Action::Proxy;
+}
+
+void mirrorToGo(const Json::Value& req) {
+  if (g_proxy == nullptr || !g_proxy->available()) {
+    return;
+  }
+  Json::Value copy = req;
+  copy["clientId"] = "dm-drop:" + req.get("clientId", "").asString();
+  Json::StreamWriterBuilder builder;
+  builder["commentStyle"] = "None";
+  builder["indentation"] = "";
+  const string payload = Json::writeString(builder, copy);
+  if (!g_proxy->forward(payload)) {
+    daemonLog(L"mirror to Go backend failed");
+  }
+}
 
 ClientEntry& clientFor(const Json::Value& req) {
   return g_clients[req.get("clientId", "").asString()];
@@ -179,15 +236,7 @@ void dispatch(const Json::Value& req, Json::Value& resp) {
     resp["returnValue"] = 1;
     return;
   }
-  // 冷方法（菜单/AI/云剪贴板等）：success 空实现——按定案不写，
-  // 走 Go 后端才有完整行为。
-  if (method == "METHOD_ON_COMMAND" || method == "METHOD_ON_MENU" ||
-      method == "METHOD_ON_PRESERVED_KEY" ||
-      method == "METHOD_ON_COMPARTMENT_CHANGED" ||
-      method == "METHOD_ON_KEYBOARD_STATUS_CHANGED" ||
-      method == "METHOD_CLOUD_CLIPBOARD_UPLOAD") {
-    return;
-  }
+  // 其余（菜单/命令/AI/云剪贴板/未知）：不走本地，由主循环转 Go 子进程。
 }
 
 } // namespace
@@ -198,7 +247,19 @@ int main() {
 
   resolveLayout();
   setCoreLogSink(&daemonLog);
-  daemonLog(L"moqi-daemon start");
+  ::InitializeCriticalSection(&g_stdoutLock);
+
+  // 阶段 5a：Go 子进程承接冷方法（菜单/命令/AI/云剪贴板），启动即预热，
+  // 对齐启动器行为（菜单首次点击不等冷启动）。exe 缺席时优雅降级。
+  ChildProxy proxy(g_daemonProgramDir + L"\\moqi-ime\\MoqiIME.exe",
+                   g_daemonProgramDir + L"\\moqi-ime", &writeFramed);
+  g_proxy = &proxy;
+  if (proxy.available()) {
+    proxy.ensureStarted();
+    daemonLog(L"moqi-daemon start (Go child warm)");
+  } else {
+    daemonLog(L"moqi-daemon start (no Go child, cold methods degraded)");
+  }
 
   Proto::FrameBuffer frames;
   char buf[8192];
@@ -216,17 +277,53 @@ int main() {
         daemonLog(L"bad request frame, exiting");
         return 1;
       }
+      const string method = req.get("method", "").asString();
+      const Action action = actionFor(method);
+
+      // init/onActivate：本地引擎状态照常建立，但响应透传 Go 的
+      // （addButton/selKeys/customizeUi 只有 Go 有）。
+      if (action == Action::ProxyWait) {
+        Json::Value localResp;
+        dispatch(req, localResp);
+        string goResp;
+        if (g_proxy != nullptr &&
+            g_proxy->forwardAndWait(payload, req.get("seqNum", -1).asInt(),
+                                    15000, &goResp)) {
+          writeFramed(Proto::framePayload(goResp));
+          continue;
+        }
+        daemonLog(L"proxy-wait failed, falling back to local response");
+        localResp["clientId"] = req.get("clientId", "");
+        string framed;
+        if (Proto::serializeJsonMessage(localResp, framed)) {
+          writeFramed(framed);
+        }
+        continue;
+      }
+
+      if (action == Action::Proxy) {
+        // 原样转发（帧内已带启动器注入的 clientId），响应由读者线程回写。
+        if (g_proxy != nullptr && g_proxy->forward(payload)) {
+          continue;
+        }
+        // Go 缺席/转发失败：回 success-empty，菜单表现为空（可降级运行）。
+        daemonLog(L"proxy forward failed, replying empty");
+      }
+
       Json::Value resp;
       dispatch(req, resp);
       // 启动器按 clientId 路由响应，必须回填。
       resp["clientId"] = req.get("clientId", "");
       string framed;
       if (Proto::serializeJsonMessage(resp, framed)) {
-        fwrite(framed.data(), 1, framed.size(), stdout);
-        fflush(stdout);
+        writeFramed(framed);
+      }
+      if (action == Action::LocalAndMirror) {
+        mirrorToGo(req);
       }
     }
   }
+  proxy.shutdown();
   daemonLog(L"moqi-daemon exit");
   return 0;
 }

@@ -20,7 +20,12 @@ void DaemonEngine::ensureEngine() {
   if (!runtime.supported() || runtime.failed() || runtime.ready()) {
     return;
   }
-  runtime.requestInit(g_daemonProgramDir, g_daemonBackendDir);
+  // rime.dll 用 daemon 自己的目录（x86 版，放安装根；moqi-ime\...\rime.dll
+  // 是 x64，归 Go 后端/x64 TSF DLL）。MOQI_RIME_DLL_DIR 可覆盖（测试用）。
+  const wchar_t* dllDirEnv = _wgetenv(L"MOQI_RIME_DLL_DIR");
+  const std::wstring dllDir =
+      dllDirEnv && *dllDirEnv ? std::wstring(dllDirEnv) : g_daemonProgramDir;
+  runtime.requestInit(g_daemonProgramDir, g_daemonBackendDir, dllDir);
   const ULONGLONG deadline = ::GetTickCount64() + 30000;
   while (!runtime.ready() && !runtime.failed() && ::GetTickCount64() < deadline) {
     ::Sleep(50);
