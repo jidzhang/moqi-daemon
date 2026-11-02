@@ -255,16 +255,23 @@ int main() {
   check(diffJson(buildMenu(s8), golden, "m").empty(),
         "cmd: proxied ids leave state untouched");
 
-  // C8. 本地静态集合（文件夹/帮助/维护回执）
-  const int localIds[] = {ID_HELP_DOCS, ID_DISCUSSIONS, ID_USER_DIR,
-                          ID_SHARED_DIR, ID_SYNC_DIR, ID_LOG_DIR,
+  // C8. 本地静态集合（文件模板/文件夹/帮助/维护回执）
+  const int localIds[] = {18, 19, 222, ID_HELP_DOCS, ID_DISCUSSIONS,
+                          ID_USER_DIR, ID_SHARED_DIR, ID_SYNC_DIR, ID_LOG_DIR,
                           ID_LAUNCHER_DEBUG_LOG, ID_LAUNCHER_RESTART_BACKENDS,
                           ID_LAUNCHER_QUIT};
   bool allLocal = true;
   for (int id : localIds) {
-    if (!isLocalCommandId(id)) allLocal = false;
+    if (!isLocalCommandId(id)) {
+      std::printf("  C8 id %d: not in isLocalCommandId\n", id);
+      allLocal = false;
+    }
     CommandResult pr = handleCommand(id, s8);
-    if (pr.action != CmdAction::Local || !pr.ok) allLocal = false;
+    if (pr.action != CmdAction::Local || !pr.ok) {
+      std::printf("  C8 id %d: action=%d ok=%d\n", id, (int)pr.action,
+                  (int)pr.ok);
+      allLocal = false;
+    }
   }
   check(allLocal, "cmd: folders/help/launcher are local receipts");
 

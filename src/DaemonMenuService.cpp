@@ -472,7 +472,37 @@ void DaemonMenuService::applyThemeColors(Menu::MenuState& state) {
 
 void DaemonMenuService::openCommandTarget(int id) {
   std::wstring root = appDataDir_.empty() ? appDataRoot() : appDataDir_;
+  // 文件模板类命令：不存在则从安装 templates\ 拷模板（缺模板用回退头），再打开。
+  auto openTemplated = [&](const wchar_t* fileName, const char* fallback) {
+    std::wstring path = root + L"\\" + fileName;
+    if (::GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) {
+      std::wstring tmpl = rimeDataDir_ + L"\\templates\\" + fileName;
+      std::string content;
+      std::ifstream in(tmpl, std::ios::binary);
+      if (in) {
+        std::ostringstream ss;
+        ss << in.rdbuf();
+        content = ss.str();
+      }
+      if (content.empty() && fallback) content = fallback;
+      if (!content.empty()) {
+        std::ofstream out(path, std::ios::binary);
+        out << content;
+      }
+    }
+    shellOpen(path, false);
+  };
   switch (id) {
+    case 18: // 打开置顶短语
+      openTemplated(L"moqi_custom_phrase.txt",
+                    "# 置顶短语\n# 词汇\t编码\t权重\n");
+      break;
+    case 19: // 打开超级简拼
+      openTemplated(L"moqi_super_abbrev.txt", nullptr);
+      break;
+    case 222: // 打开成对符号设置
+      openTemplated(L"moqi_auto_pair_symbols.txt", nullptr);
+      break;
     case Menu::ID_HELP_DOCS:
       shellOpen(L"https://moqiyinxing.chunqiujinjing.com/index", true);
       break;

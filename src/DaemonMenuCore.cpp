@@ -344,7 +344,8 @@ bool strCommand(const StrOption* opts, size_t n, int id, std::string& out) {
 } // namespace
 
 bool isLocalCommandId(int id) {
-  if (id == ID_HELP_DOCS || id == ID_DISCUSSIONS || id == ID_USER_DIR ||
+  if (id == 18 || id == 19 || id == 222 || // 置顶短语/超级简拼/成对符号设置
+      id == ID_HELP_DOCS || id == ID_DISCUSSIONS || id == ID_USER_DIR ||
       id == ID_SHARED_DIR || id == ID_SYNC_DIR || id == ID_LOG_DIR ||
       id == ID_LAUNCHER_DEBUG_LOG || id == ID_LAUNCHER_RESTART_BACKENDS ||
       id == ID_LAUNCHER_QUIT || id == ID_SHARED_INPUT_STATE ||
@@ -359,8 +360,7 @@ bool isLocalCommandId(int id) {
   if (id >= ID_APPEARANCE_THEME_BASE) return true;                  // 主题
   if ((id >= 100 && id <= 127) || (id >= 170 && id <= 201) ||
       (id >= 213 && id <= 225)) {
-    // 222 = 打开成对符号设置（Go 的存量 id 冲突，按黄金走代理）
-    return id != 222;
+    return true; // 外观数值/字串组
   }
   return false;
 }
@@ -461,7 +461,7 @@ CommandResult handleCommand(int id, MenuState& state) {
     static const NumOption cfonts[] = {
         {213, 8, "8"}, {214, 10, "10"}, {216, 12, "12"}, {217, 14, "14"},
         {218, 16, "16"}, {219, 18, "18"}, {220, 20, "20"}, {221, 22, "22"},
-        {222, 24, "24"}, {223, 26, "26"}, {224, 28, "28"}, {225, 30, "30"}};
+        {223, 26, "26"}, {224, 28, "28"}, {225, 30, "30"}};
     static const StrOption faces[] = {
         {194, "Segoe UI", "Segoe UI"},
         {195, "微软雅黑 UI", "Microsoft YaHei UI"},
@@ -485,13 +485,10 @@ CommandResult handleCommand(int id, MenuState& state) {
                                     {146, "白色", "#ffffff"},
                                     {147, "深蓝", "#1d4ed8"}};
 
-    // 注意：222 在字体表（成对符号设置）与注释字号表冲突——Go 用 222 做
-    // “打开成对符号设置”，注释字号 24 实为 222？查常量表：注释字号 24=222
-    // 与成对符号设置同值是 Go 侧存量冲突；跟随黄金：222 = 打开成对符号设置
-    //（代理）。注释字号 24 的命令在 Go 也永远先命中 onCommand 的
-    // ID_OPEN_AUTO_PAIR_SYMBOLS 分支——按 Go 行为走代理。
+    // 注意：222 = 打开成对符号设置（与注释字号 24 的 id 冲突是 Go 存量——
+    // Go 的 onCommand 也是 222 先命中“打开成对符号设置”，字号 24 永远选不中，
+    // 此处按同样语义走本地回执）。
     r.customizeUi = Json::Value(Json::objectValue);
-    if (id == 222) return r; // 打开成对符号设置 -> 代理
     if (numCommand(perRow, 4, id, num)) {
       state.perRow = num;
       r.customizeUi["candPerRow"] = num;
@@ -507,8 +504,7 @@ CommandResult handleCommand(int id, MenuState& state) {
       state.fontPoint = num;
       r.customizeUi["candFontSize"] = num;
       local();
-    } else if (numCommand(cfonts, 12, id, num)) {
-      if (id == 222) return r; // 不可达（上已拦截），保防御
+    } else if (numCommand(cfonts, 11, id, num)) {
       state.commentFontPoint = num;
       r.customizeUi["candCommentFontSize"] = num;
       local();
@@ -541,12 +537,12 @@ CommandResult handleCommand(int id, MenuState& state) {
     }
   }
 
-  // 静态本地集（文件夹/帮助/维护）：回执即可
+  // 静态本地集（文件模板/文件夹/帮助/维护）：回执即可，动作在应用层
   if (r.action == CmdAction::Proxy &&
-      (id == ID_HELP_DOCS || id == ID_DISCUSSIONS || id == ID_USER_DIR ||
-       id == ID_SHARED_DIR || id == ID_SYNC_DIR || id == ID_LOG_DIR ||
-       id == ID_LAUNCHER_DEBUG_LOG || id == ID_LAUNCHER_RESTART_BACKENDS ||
-       id == ID_LAUNCHER_QUIT)) {
+      (id == 18 || id == 19 || id == 222 || id == ID_HELP_DOCS ||
+       id == ID_DISCUSSIONS || id == ID_USER_DIR || id == ID_SHARED_DIR ||
+       id == ID_SYNC_DIR || id == ID_LOG_DIR || id == ID_LAUNCHER_DEBUG_LOG ||
+       id == ID_LAUNCHER_RESTART_BACKENDS || id == ID_LAUNCHER_QUIT)) {
     local();
   }
   return r;
