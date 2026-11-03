@@ -34,6 +34,28 @@ public:
   // 会话生命周期（onActivate = tryEngage 的无 TSF 版）。
   void onActivate();
   void deactivate();
+  // 命令响应附中英/全半角图标刷新（changeButton；开关类 ON_COMMAND 用，
+  // 键路径在 filterKeyDown/Up 里已自带）。
+  void appendLangStatus(Json::Value& resp);
+  // 菜单"总候选数"变更的即时生效：更新计数 + 写 menu/page_size。
+  void applyCandidateCount(int count);
+  // 方案切换后重写 menu/page_size（新方案默认 9，会和界面候选数不一致）。
+  void applySchemaPageSize() { refreshPageSize(); }
+  void setSemicolonSelectSecond(bool enabled) {
+    semicolonSelectSecond_ = enabled;
+  }
+  // 自上次导出后是否有提交（= 主 userdb 有新学习）。客户端反激活时据此
+  // 决定是否同步+备份快照，让 64 位进程能导入 32 位应用学到的词。
+  bool consumeUserDictDirty() {
+    bool d = userDictDirty_;
+    userDictDirty_ = false;
+    return d;
+  }
+  bool hasUserDictChanges() const { return userDictDirty_; }
+  // 当前输入模式（ascii/full）——ON_ACTIVATE 本地应答选按钮图标用。
+  bool uiModeState(bool* ascii, bool* full) {
+    return readInputModes(ascii, full);
+  }
   // 按键/候选方法与 LocalEngine 同签名（KeyEventData 输入）。
   bool filterKeyDown(const KeyEventData& e, Json::Value& resp,
                      std::function<void(Json::Value)> push = nullptr);
@@ -49,20 +71,35 @@ public:
   // 热键按下时触发后台请求；结果到齐后 aiActive=true，候选窗顶部显示
   // AI 结果，选中即上屏。返回 true = 该键已被 AI 消费。
   // push：结果到达时把候选更新响应主动推给客户端（Go 的 asyncResponseSender
-  // 等价物；缺它候选窗要等下一次按键才刷新）。
+  // 等价物；异步保证慢网络不阻塞打字）。
+  // localState：64 位客户端（DLL 进程内引擎）转发热键时携带的
+  // {localComposition, localCandidates}；非空时本引擎会话不参与，覆盖层
+  // 由 DLL 本地保管，这里只生成并推送（aiActive 不置位）。
   bool maybeTriggerAI(const KeyEventData& e,
-                      std::function<void(Json::Value)> push);
+                      std::function<void(Json::Value)> push,
+                      const Json::Value* localState = nullptr);
   // 选中 AI 候选（index 为 AI 覆盖层的位次）。
   bool commitAICandidate(int index, Json::Value& resp);
   void resetAIState();
   bool aiActive() const { return aiState_.active; }
   bool aiPending() const { return aiState_.pending.load(); }
 
+  // ---- 5e 云剪贴板列表选择器 ----
+  // 热键（Ctrl+0）触发 → 后台拉列表 → push 推送候选窗。返回 true=消费。
+  // public：main.cpp 的 localComposition 早退路径也要查它（2026-11-03）。
+  bool maybeShowCloudClipList(const KeyEventData& e,
+                              std::function<void(Json::Value)> push);
+  // 列表加载入口（preserved key 路径直接调，不经按键判定）。
+  bool showCloudClipList(std::function<void(Json::Value)> push);
+  bool cloudClipActive() const { return cloudClip_.active; }
+  bool cloudClipLoading() const { return cloudClipLoading_.load(); }
+
 private:
   struct EngineState {
     bool ok = false;
     std::string commit;
     std::string composition;
+    int pageNo = 0;
     int cursorPos = 0;
     int selStart = 0;
     int selEnd = 0;
@@ -92,6 +129,7 @@ private:
   rimeapi::SessionId sessionId_ = 0;
   int candidateCount_ = 7;
   bool semicolonSelectSecond_ = false;
+  ULONGLONG lastInitAttempt_ = 0;
   int lastKeyDownCode_ = 0;
   int lastKeySkip_ = 0;
   int lastKeyUpCode_ = 0;
@@ -108,6 +146,7 @@ private:
   std::string rawInputAtCommit_;
   std::vector<int> displayPerm_;
   std::vector<BYTE> keyStatesBuf_; // KeyEventData backing store per call
+  std::atomic<bool> userDictDirty_{false};
 
   // ---- AI 状态（对齐 Go：seq 丢弃过期结果 / pending 去重 / active 覆盖）----
   struct AIState {
@@ -122,7 +161,45 @@ private:
     DaemonAI client;
   } aiState_;
   std::mutex aiResultLock_;
+  // 置顶短语 / 超级简拼 overlay（Go custom_phrase/super_abbrev 等价）
+  int overlayCustomCount_ = 0;
+  std::vector<std::string> overlayCustomTexts_;
+  std::string overlaySuperText_;
+  std::string overlayCommitText_;
+  int overlayConsumeKeyUpCode_ = 0;
+
   std::thread aiWorker_;
+  ULONGLONG aiConfigLoadedTick_ = 0; // 配置节流（见 maybeTriggerAI）
+  bool aiEnabledCached_ = false;
+
+  // ---- 5e 云剪贴板列表选择器（Go cloud_clipboard.go 编排层对应实现）----
+  struct CloudClipEntry {
+    std::string name;
+    std::string preview;
+    std::string comment;  // 时间戳 mm-dd HH:mm
+    std::string fullText;
+  };
+  struct CloudClipState {
+    bool active = false;
+    int cursor = 0;  // 全局索引
+    int page = 0;    // 0 起
+    std::vector<CloudClipEntry> entries;
+  } cloudClip_;
+  static constexpr int kCloudClipPageSize = 9;
+  std::atomic<bool> cloudClipLoading_{false};
+  std::thread cloudClipWorker_;
+
+  // ---- 5e 云剪贴板列表选择器（Go cloud_clipboard.go 编排层对应实现）----
+  // 云剪贴板激活期间的按键处理（选字/翻页/删除/退出）。返回 true=消费。
+  bool handleCloudClipKeyDown(const KeyEventData& e, Json::Value& resp,
+                              std::function<void(Json::Value)> push);
+  bool handleCloudClipFilterDown(const KeyEventData& e, Json::Value& resp);
+  bool handleCloudClipKeyUp(const KeyEventData& e, Json::Value& resp);
+  void resetCloudClipState() { cloudClip_ = CloudClipState{}; }
+  void fillCloudClipResponse(Json::Value& resp);
+  void commitCloudClipEntry(Json::Value& resp, const CloudClipEntry& entry);
+  bool isCloudClipHandledKey(const KeyEventData& e) const;
+  bool isCloudClipHotkey(const KeyEventData& e) const;
 };
 
 } // namespace Moqi

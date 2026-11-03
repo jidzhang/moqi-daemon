@@ -10,9 +10,11 @@
 #include <cctype>
 #include <fstream>
 #include <regex>
+#include <set>
 #include <sstream>
 
 #include "DaemonAI.h"
+#include "DaemonCloudConfig.h"
 #include "ProtoFraming.h"
 
 #pragma comment(lib, "winhttp.lib")
@@ -20,6 +22,8 @@
 #pragma comment(lib, "crypt32.lib")
 
 namespace Moqi {
+void daemonLogExtern(const std::wstring& msg);
+
 namespace {
 
 // ---------------------------------------------------------------- aikey ---
@@ -209,6 +213,7 @@ void replaceAll(std::string *s, const std::string &from, const std::string &to) 
 }
 
 std::string candidatesTop3Text(const std::vector<std::string> &cands) {
+  if (cands.empty()) return "无";
   std::string out;
   for (size_t i = 0; i < cands.size() && i < 3; ++i) {
     if (!out.empty()) out += "\n";
@@ -217,47 +222,89 @@ std::string candidatesTop3Text(const std::vector<std::string> &cands) {
   return out;
 }
 
+std::string candidateAt(const std::vector<std::string> &c, size_t i) {
+  return i < c.size() ? c[i] : std::string();
+}
+
 std::string buildUserPrompt(const std::string &promptTemplate,
                             const std::string &composition,
                             const std::vector<std::string> &candidates,
                             const std::string &previousCommit) {
   std::string prompt = promptTemplate;
-  replaceAll(&prompt, "{{composition}}", composition);
-  replaceAll(&prompt, "{{previous_commit}}", previousCommit);
-  replaceAll(&prompt, "{{candidate_1}}", candidates.empty() ? "" : candidates[0]);
-  replaceAll(&prompt, "{{candidates_top3}}", candidatesTop3Text(candidates));
-  std::string context = composition;
-  if (!candidates.empty()) {
-    if (!context.empty()) context += "  ";
-    context += candidatesTop3Text(candidates);
-  }
-  replaceAll(&prompt, "{{context}}", context);
-  return prompt;
+  const std::string prev = previousCommit.empty() ? "无" : previousCommit;
+  bool replaced = false;
+  auto sub = [&](const char *key, const std::string &value) {
+    if (prompt.find(key) == std::string::npos) return;
+    replaceAll(&prompt, key, value);
+    replaced = true;
+  };
+  sub("{{previous_commit}}", prev);
+  sub("{{composition}}", composition);
+  sub("{{raw_input}}", composition);
+  sub("{{candidate_1}}", candidateAt(candidates, 0));
+  sub("{{candidate_2}}", candidateAt(candidates, 1));
+  sub("{{candidate_3}}", candidateAt(candidates, 2));
+  sub("{{first_candidate}}", candidateAt(candidates, 0));
+  sub("{{second_candidate}}", candidateAt(candidates, 1));
+  sub("{{third_candidate}}", candidateAt(candidates, 2));
+  sub("{{candidates_top3}}", candidatesTop3Text(candidates));
+  if (replaced) return prompt;
+  // Go：模板一个占位符都没有时，把上下文追加到提示词后面，否则模型
+  // 完全不知道用户打了什么。
+  return prompt + "\n\n" + "上一句：" + prev + "\n原始输入：" +
+         (composition.empty() ? "无" : composition) + "\n前三个候选词：\n" +
+         candidatesTop3Text(candidates);
 }
 
-// 结果解析：按行切、去编号/引号/空行（对齐 Go parseReviewCandidates）。
+std::string normalizeCandidateText(const std::string &raw) {
+  std::string s = trimCopy(raw);
+  // 去 "1. " / "1) " / "- " / "* " 前缀
+  size_t i = 0;
+  while (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i]))) ++i;
+  if (i > 0 && i < s.size() && (s[i] == '.' || s[i] == ')' || s[i] == '、')) {
+    s = trimCopy(s.substr(i + 1));
+  } else if (!s.empty() && (s[0] == '-' || s[0] == '*')) {
+    s = trimCopy(s.substr(1));
+  }
+  if (s.size() >= 2 && ((s.front() == '"' && s.back() == '"') ||
+                        (s.front() == '\xE2' && s.back() == '"'))) {
+    s = s.substr(1, s.size() - 2);
+  }
+  // Go truncateRunes(120)：按字符而不是字节截断。
+  std::wstring ws = utf8ToWs(s);
+  if (ws.size() > 120) s = wsToUtf8(ws.substr(0, 120));
+  return s;
+}
+
+// 结果解析：JSON 数组优先，否则按行切；去重、限 3 条（Go normalizeAICandidates）。
 std::vector<std::string> parseReviewCandidates(const std::string &content) {
+  std::vector<std::string> raw;
+  const std::string trimmed = trimCopy(content);
+  if (!trimmed.empty() && trimmed[0] == '[') {
+    Json::Value arr;
+    Json::CharReaderBuilder builder;
+    std::unique_ptr<Json::CharReader> reader(builder.newCharReader());
+    std::string errs;
+    if (reader->parse(trimmed.data(), trimmed.data() + trimmed.size(), &arr,
+                      &errs) &&
+        arr.isArray()) {
+      for (const auto &v : arr) {
+        if (v.isString()) raw.push_back(v.asString());
+      }
+    }
+  }
+  if (raw.empty()) {
+    std::istringstream ss(content);
+    std::string line;
+    while (std::getline(ss, line)) raw.push_back(line);
+  }
   std::vector<std::string> out;
-  std::istringstream ss(content);
-  std::string line;
-  while (std::getline(ss, line)) {
-    std::string s = trimCopy(line);
-    if (s.empty()) continue;
-    // 去 "1. " / "1) " / "- " / "* " 前缀
-    size_t i = 0;
-    while (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i]))) ++i;
-    if (i > 0 && i < s.size() && (s[i] == '.' || s[i] == ')' || s[i] == '、')) {
-      s = trimCopy(s.substr(i + 1));
-    } else if (!s.empty() && (s[0] == '-' || s[0] == '*')) {
-      s = trimCopy(s.substr(1));
-    }
-    // 去引号
-    if (s.size() >= 2 && ((s.front() == '"' && s.back() == '"') ||
-                          (s.front() == '\xE2' && s.back() == '"'))) {
-      s = s.substr(1, s.size() - 2);
-    }
-    if (!s.empty()) out.push_back(s);
-    if (out.size() >= 9) break; // 与候选窗上限一致
+  std::set<std::string> seen;
+  for (const auto &line : raw) {
+    std::string s = normalizeCandidateText(line);
+    if (s.empty() || !seen.insert(s).second) continue;
+    out.push_back(s);
+    if (out.size() >= 3) break;  // Go aiCandidateLimit = 3
   }
   return out;
 }
@@ -373,26 +420,32 @@ std::string ResolveAIKey(const std::string &raw) {
   return plain;
 }
 
+namespace {
+// jsoncpp 的 asString() 对数字/对象会抛 Json::LogicError；配置文件是用户
+// 手改的，类型写错不能把整个输入法带崩（异常穿过 dispatch 锁会冻结所有
+// 客户端）。统一用这个取值器。
+std::string jsonString(const Json::Value& v, const char* key) {
+  const Json::Value& x = v[key];
+  return x.isString() ? x.asString() : std::string();
+}
+}  // namespace
+
 bool DaemonAI::load() {
   cfg_ = AIConfig();
   Json::Value root;
-  // 用户配置优先，缺失回落到随包配置。
-  if (!readJsonFile(aiConfigPathUser(), &root)) {
-    const wchar_t *program = _wgetenv(L"MOQI_PROGRAM_DIR");
-    std::wstring programDir;
-    if (program && *program) {
-      programDir = program;
-    } else {
-      wchar_t exePath[MAX_PATH] = {};
-      if (::GetModuleFileNameW(nullptr, exePath, MAX_PATH) > 0) {
-        std::wstring full(exePath);
-        const size_t slash = full.find_last_of(L'\\');
-        if (slash != std::wstring::npos) programDir = full.substr(0, slash);
-      }
-    }
-    if (!readJsonFile(aiConfigPathBundled(programDir), &root)) {
+  // 用户配置优先；只有"文件不存在"才回落到随包配置。用户文件存在但
+  // JSON 写坏时不能静默改用随包 key（既难排查，也可能产生计费/隐私问题）。
+  const std::string userPath = aiConfigPathUser();
+  const bool userExists =
+      !userPath.empty() &&
+      ::GetFileAttributesW(utf8ToWs(userPath).c_str()) != INVALID_FILE_ATTRIBUTES;
+  if (userExists) {
+    if (!readJsonFile(userPath, &root)) {
+      daemonLogExtern(L"[ai] user ai_config.json parse failed; AI disabled");
       return false;
     }
+  } else if (!readJsonFile(wsToUtf8(AiConfigBundledPathW()), &root)) {
+    return false;
   }
   const Json::Value &api = root["api"];
   if (!api.isObject()) return false;
@@ -402,17 +455,18 @@ bool DaemonAI::load() {
   std::string baseUrl = trimCopy(baseVal.asString());
   if (baseUrl.empty()) return false;
   cfg_.baseUrl = baseUrl;
-  cfg_.apiKey = ResolveAIKey(trimCopy(api.get("api_key", "").asString()));
-  cfg_.model = trimCopy(api.get("model", "").asString());
+  cfg_.apiKey = ResolveAIKey(trimCopy(jsonString(api, "api_key")));
+  cfg_.model = trimCopy(jsonString(api, "model"));
   if (cfg_.apiKey.empty() || cfg_.model.empty()) return false;
 
   const Json::Value &actions = root["actions"];
   if (actions.isArray()) {
     for (const auto &item : actions) {
+      if (!item.isObject()) continue;
       AIAction action;
-      action.name = item.get("name", "").asString();
-      action.hotkey = item.get("hotkey", "").asString();
-      action.prompt = item.get("prompt", "").asString();
+      action.name = jsonString(item, "name");
+      action.hotkey = jsonString(item, "hotkey");
+      action.prompt = jsonString(item, "prompt");
       if (action.prompt.empty() || action.hotkey.empty()) continue;
       if (!parseHotkey(action.hotkey, &action)) continue;
       cfg_.actions.push_back(action);
@@ -441,13 +495,18 @@ bool DaemonAI::generate(const AIAction &action, const std::string &composition,
     *err = "ai disabled";
     return false;
   }
+  if (!outboundAllowed()) {
+    *err = kOutboundBlockedMessage;
+    return false;
+  }
   Json::Value body(Json::objectValue);
   body["model"] = cfg_.model;
   Json::Value messages(Json::arrayValue);
   Json::Value systemMsg(Json::objectValue);
   systemMsg["role"] = "system";
   systemMsg["content"] =
-      "你是中文输入法的文字助手。只输出结果本身，不要解释、不要引号、不要编号。";
+      "你是一个中文输入法助手。请严格按用户要求输出候选文案，每条单独一行，"
+      "不要编号，不要项目符号，不要解释，不要输出思考过程。";
   messages.append(systemMsg);
   Json::Value userMsg(Json::objectValue);
   userMsg["role"] = "user";
@@ -455,7 +514,10 @@ bool DaemonAI::generate(const AIAction &action, const std::string &composition,
       buildUserPrompt(action.prompt, composition, candidates, previousCommit);
   messages.append(userMsg);
   body["messages"] = messages;
-  body["temperature"] = 0.7;
+  body["temperature"] = 0.8;
+  // Go aiMaxOutputTokens = 128；不设上限时模型可能吐出整段，用户等到
+  // WinHTTP 30s 接收超时，费用也高。
+  body["max_tokens"] = 128;
 
   Json::StreamWriterBuilder writer;
   writer["commentStyle"] = "None";
@@ -487,14 +549,33 @@ bool DaemonAI::generate(const AIAction &action, const std::string &composition,
     *err = "no choices";
     return false;
   }
-  const std::string content =
-      choices[0]["message"].get("content", "").asString();
+  const Json::Value& contentVal = choices[0]["message"]["content"];
+  const std::string content = contentVal.isString() ? contentVal.asString() : "";
   *out = parseReviewCandidates(content);
   if (out->empty()) {
     *err = "empty ai result";
     return false;
   }
   return true;
+}
+
+std::wstring AiConfigPathUserW() { return utf8ToWs(aiConfigPathUser()); }
+
+std::wstring AiConfigBundledPathW() {
+  // 与 load() 的回落推导一致：MOQI_PROGRAM_DIR 优先，否则按 exe 所在目录。
+  const wchar_t *program = _wgetenv(L"MOQI_PROGRAM_DIR");
+  std::wstring programDir;
+  if (program && *program) {
+    programDir = program;
+  } else {
+    wchar_t exePath[MAX_PATH] = {};
+    if (::GetModuleFileNameW(nullptr, exePath, MAX_PATH) > 0) {
+      std::wstring full(exePath);
+      const size_t slash = full.find_last_of(L'\\');
+      if (slash != std::wstring::npos) programDir = full.substr(0, slash);
+    }
+  }
+  return utf8ToWs(aiConfigPathBundled(programDir));
 }
 
 } // namespace Moqi

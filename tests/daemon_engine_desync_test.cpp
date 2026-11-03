@@ -27,6 +27,9 @@ extern std::wstring g_daemonBackendDir;
 void daemonLogExtern(const std::wstring& message) {
   std::wcout << message << std::endl << std::flush;
 }
+void daemonLogDebugExtern(const std::wstring& message) {
+  std::wcout << message << std::endl << std::flush;
+}
 }
 
 namespace {

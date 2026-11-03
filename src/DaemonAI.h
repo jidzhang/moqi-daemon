@@ -53,4 +53,9 @@ private:
 // 非混淆格式（用户自己的明文 key）原样返回。
 std::string ResolveAIKey(const std::string &raw);
 
+// ai_config.json 路径（load() 与菜单"配置 AI 助手"共用同一来源，
+// 保证打开的就是引擎实际读取的那个文件）。
+std::wstring AiConfigPathUserW();    // %APPDATA%\Moqi\ai_config.json
+std::wstring AiConfigBundledPathW(); // 安装目录 moqi-ime\input_methods\rime\ 下
+
 } // namespace Moqi
