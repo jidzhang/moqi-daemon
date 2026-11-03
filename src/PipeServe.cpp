@@ -10,6 +10,7 @@
 #include <lmcons.h>
 #include <sddl.h>
 
+#include <atomic>
 #include <functional>
 #include <map>
 #include <memory>
@@ -43,18 +44,38 @@ std::string newClientId() {
   return "dm-????";
 }
 
+// 服务端句柄是 overlapped（见 run）。同步句柄下，读者线程挂着的 ReadFile
+// 会让其他线程的 WriteFile 排队到它完成——AI 推送因此一直压到客户端发来
+// 下一个请求才出管道（2026-11-02 19:17 实证：推送在下一次按键的 RPC 里才被
+// 读到）。写走 overlapped + 自带事件，与挂起的读互不阻塞。
 bool writeAll(HANDLE h, const void* data, size_t len) {
+  HANDLE ev = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  if (ev == nullptr) return false;
   const char* p = static_cast<const char*>(data);
+  bool ok = true;
   while (len > 0) {
+    OVERLAPPED ov = {};
+    ov.hEvent = ev;
     DWORD written = 0;
-    if (!::WriteFile(h, p, static_cast<DWORD>(len), &written, nullptr) ||
-        written == 0) {
-      return false;
+    if (!::WriteFile(h, p, static_cast<DWORD>(len), &written, &ov) &&
+        ::GetLastError() != ERROR_IO_PENDING) {
+      ok = false;
+      break;
+    }
+    // 有界等待：客户端不读管道（窗口卡死/断连）时，不能让 AI 推送线程
+    // 永远堵在这里——它会被下一次热键 join。
+    const DWORD wait = ::WaitForSingleObject(ev, 5000);
+    if (wait != WAIT_OBJECT_0 ||
+        !::GetOverlappedResult(h, &ov, &written, FALSE) || written == 0) {
+      ::CancelIoEx(h, &ov);
+      ok = false;
+      break;
     }
     p += written;
     len -= written;
   }
-  return true;
+  ::CloseHandle(ev);
+  return ok;
 }
 
 } // namespace
@@ -65,6 +86,7 @@ struct PipeServe::Impl {
   volatile LONG stopRequested = 0;
   std::wstring pipeName;
   HANDLE singleInstance = nullptr;
+  std::atomic<bool> ownsPipe{false};
 
   Impl() { ::InitializeCriticalSection(&clientsLock); }
   ~Impl() {
@@ -123,9 +145,15 @@ DWORD WINAPI clientThread(LPVOID self) {
 
   Proto::FrameBuffer frames;
   char buf[8192];
+  HANDLE readEvent = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
   for (;;) {
+    OVERLAPPED ov = {};
+    ov.hEvent = readEvent;
     DWORD got = 0;
-    if (!::ReadFile(pipe, buf, sizeof(buf), &got, nullptr) || got == 0) {
+    if (readEvent == nullptr ||
+        (!::ReadFile(pipe, buf, sizeof(buf), &got, &ov) &&
+         ::GetLastError() != ERROR_IO_PENDING) ||
+        !::GetOverlappedResult(pipe, &ov, &got, TRUE) || got == 0) {
       break; // 客户端断开
     }
     frames.append(buf, got);
@@ -156,6 +184,9 @@ DWORD WINAPI clientThread(LPVOID self) {
   serve->unregisterClient(clientId);
   ::DisconnectNamedPipe(pipe);
   ::CloseHandle(pipe);
+  if (readEvent != nullptr) {
+    ::CloseHandle(readEvent);
+  }
   return 0;
 }
 
@@ -164,6 +195,8 @@ DWORD WINAPI clientThread(LPVOID self) {
 PipeServe::PipeServe() : impl_(new Impl) {}
 
 PipeServe::~PipeServe() { delete impl_; }
+
+bool PipeServe::ownsPipe() const { return impl_->ownsPipe.load(); }
 
 void PipeServe::routeFrame(const std::string& framed) {
   if (framed.size() < 4) return;
@@ -211,17 +244,10 @@ int PipeServe::run() {
   }
 
   // 单实例互斥体：沿用 MoqiLaunchMutex（TSF DLL 的存活探测名，零改动兼容）。
-  impl_->singleInstance =
-      ::CreateMutexW(nullptr, FALSE, L"MoqiLaunchMutex");
-  const bool alreadyRunning =
-      (impl_->singleInstance != nullptr &&
-       ::GetLastError() == ERROR_ALREADY_EXISTS);
-
-  bool firstInstance = true;
-  // 2026-11-02 部署缺陷修复：安装器以管理员身份拉起 daemon 时，管道会继承
-  // 高完整性标签，普通权限应用（TSF DLL）连接被拒（实测 CONNECT gle=5）。
-  // 显式给 DACL 全员访问 + 强制中完整性标签——管道名已按用户名隔离，
-  // 跨用户仍不可达。
+  // 安全描述符与管道一致（全员访问 + 中完整性），否则安装器以管理员拉起
+  // 的 daemon 创建高完整性互斥体后，普通权限的 TSF/新 daemon 打不开它，
+  // 会误判成“首实例”并卡在 CreateNamedPipe 重试循环（2026-11-04 实测
+  // 出现 3 个 daemon 同时存活）。管道名已按用户名隔离，跨用户仍不可达。
   SECURITY_ATTRIBUTES sa = {};
   PSECURITY_DESCRIPTOR sd = nullptr;
   if (::ConvertStringSecurityDescriptorToSecurityDescriptorW(
@@ -230,6 +256,18 @@ int PipeServe::run() {
     sa.lpSecurityDescriptor = sd;
     sa.bInheritHandle = FALSE;
   }
+  // 测试钩子：换名互斥体，允许场景测试与真实 daemon 并行（默认生产名）。
+  const wchar_t* overrideMutex = _wgetenv(L"MOQI_SERVE_MUTEX");
+  LPCWSTR mutexName =
+      (overrideMutex != nullptr && overrideMutex[0] != L'\0')
+          ? overrideMutex
+          : L"MoqiLaunchMutex";
+  impl_->singleInstance = ::CreateMutexW(sd != nullptr ? &sa : nullptr,
+                                         FALSE, mutexName);  const bool alreadyRunning =
+      (impl_->singleInstance != nullptr &&
+       ::GetLastError() == ERROR_ALREADY_EXISTS);
+
+  bool firstInstance = true;
   for (;;) {
     if (impl_->stopRequested) break;
     // FIRST_PIPE_INSTANCE 只在首个实例上用：它要求名字尚不存在——
@@ -238,21 +276,57 @@ int PipeServe::run() {
         firstInstance ? FILE_FLAG_FIRST_PIPE_INSTANCE : 0;
     HANDLE pipe = ::CreateNamedPipeW(
         impl_->pipeName.c_str(),
-        PIPE_ACCESS_DUPLEX | firstFlag,
+        PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | firstFlag,
         PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
         PIPE_UNLIMITED_INSTANCES, 64 * 1024, 64 * 1024, 0,
         sd != nullptr ? &sa : nullptr);
     if (pipe == INVALID_HANDLE_VALUE) {
-      if (firstInstance && alreadyRunning) {
-        daemonLogExtern(L"[serve] another instance owns the pipe; exiting");
-        break;
+      if (firstInstance) {
+        // 互斥体可能因完整性/权限差异看不到，直接探活管道兜底：能连上
+        // 就说明已有实例在服务，必须退出，不能无限重试占着引擎不放。
+        bool live = alreadyRunning;
+        if (!live) {
+          HANDLE probe = ::CreateFileW(
+              impl_->pipeName.c_str(), GENERIC_READ | GENERIC_WRITE, 0,
+              nullptr, OPEN_EXISTING, 0, nullptr);
+          if (probe != INVALID_HANDLE_VALUE) {
+            ::CloseHandle(probe);
+            live = true;
+          }
+        }
+        if (live) {
+          daemonLogExtern(L"[serve] another instance owns the pipe; exiting");
+          break;
+        }
       }
       ::Sleep(500);
       continue;
     }
+    if (firstInstance) {
+      impl_->ownsPipe.store(true);
+      daemonLogExtern(L"[serve] pipe ready pid=" +
+                      std::to_wstring(::GetCurrentProcessId()));
+    }
     firstInstance = false;
-    if (!::ConnectNamedPipe(pipe, nullptr) &&
-        ::GetLastError() != ERROR_PIPE_CONNECTED) {
+    // overlapped 句柄的 ConnectNamedPipe 必须带 OVERLAPPED：正常返回
+    // FALSE + ERROR_IO_PENDING，等事件；ERROR_PIPE_CONNECTED = 客户端已先到。
+    OVERLAPPED connectOv = {};
+    connectOv.hEvent = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    bool connected = ::ConnectNamedPipe(pipe, &connectOv) != FALSE;
+    if (!connected) {
+      const DWORD err = ::GetLastError();
+      if (err == ERROR_PIPE_CONNECTED) {
+        connected = true;
+      } else if (err == ERROR_IO_PENDING && connectOv.hEvent != nullptr) {
+        DWORD ignored = 0;
+        connected =
+            ::GetOverlappedResult(pipe, &connectOv, &ignored, TRUE) != FALSE;
+      }
+    }
+    if (connectOv.hEvent != nullptr) {
+      ::CloseHandle(connectOv.hEvent);
+    }
+    if (!connected) {
       ::CloseHandle(pipe);
       if (impl_->stopRequested) break;
       continue;

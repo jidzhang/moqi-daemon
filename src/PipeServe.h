@@ -22,6 +22,10 @@ public:
   // 阻塞运行接受循环（每个客户端一个线程）。返回 = requestStop 或致命错误。
   int run();
 
+  // 是否已抢到管道（第一个实例）。预热线程必须等它变 true，避免多实例
+  // 竞争时每个进程都建一份引擎。
+  bool ownsPipe() const;
+
   // Go 子进程读者线程入口：按帧内 clientId 路由到对应客户端管道；
   // 找不到（dm-drop: 镜像回包 / 已断开）静默丢弃。
   void routeFrame(const std::string& framed);
