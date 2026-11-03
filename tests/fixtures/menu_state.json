@@ -117,16 +117,6 @@
       "current": false
     }
   ],
-  "schemeSets": [
-    {
-      "name": "Rime",
-      "current": true
-    },
-    {
-      "name": "RimeInProc",
-      "current": false
-    }
-  ],
   "themes": [
     {
       "id": "theme-0",

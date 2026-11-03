@@ -108,12 +108,6 @@ static MenuState loadState(const Json::Value& j) {
     e.current = sc.get("current", false).asBool();
     s.schemas.push_back(e);
   }
-  for (const auto& ss : j["schemeSets"]) {
-    SchemeSetEntry e;
-    e.name = ss["name"].asString();
-    e.current = ss.get("current", false).asBool();
-    s.schemeSets.push_back(e);
-  }
   for (const auto& th : j["themes"]) {
     ThemeEntry e;
     e.id = th["id"].asString();
@@ -163,13 +157,46 @@ int main() {
   check(state.schemas.size() == 8, "state: 8 schemas loaded");
   check(state.themes.size() == 14, "state: 14 themes loaded");
 
-  // A. 黄金树逐项一致
+  // 黄金 = 纯 Go 抓包；daemon 专属新增项在比对前注入到期望树的对应位置
+  //（"输入设置"组末尾），保持 fixture 是干净的 Go 侧快照。
+  {
+    bool injected = false;
+    for (auto& top : golden) {
+      if (top.get("text", "").asString() != "输入设置") continue;
+      Json::Value ai = Json::Value(Json::objectValue);
+      ai["id"] = ID_AI_CONFIG;
+      ai["text"] = "配置AI助手";
+      ai["checked"] = false;
+      ai["enabled"] = true;
+      ai["submenu"] = Json::Value(Json::arrayValue);
+      ai["separator"] = false;
+      top["submenu"].append(ai);
+      injected = true;
+    }
+    check(injected, "golden: 输入设置 group found for AI item injection");
+    // 开关区同样带 daemon 专属 "option" 字段（id 序 = state.switches 序）。
+    {
+      size_t si = 0;
+      for (auto& top : golden) {
+        const int id = top.get("id", 0).asInt();
+        if (id < ID_SWITCH_BASE || id >= ID_SCHEME_SET_BASE) continue;
+        if (si < state.switches.size()) {
+          top["option"] = state.switches[si].name;
+          ++si;
+        }
+      }
+      check(si == state.switches.size(),
+            "golden: switch items aligned with state for option injection");
+    }
+  }
+
+  // A. 黄金树逐项一致（Go 26 项 + daemon 专属"配置 AI 助手"）
   Json::Value menu = buildMenu(state);
   std::string d = diffJson(menu, golden, "menu");
   if (d.empty()) {
-    check(true, "menu: identical to Go golden (26 items)");
+    check(true, "menu: identical to Go golden + daemon AI item");
   } else {
-    check(false, "menu: identical to Go golden (26 items)");
+    check(false, "menu: identical to Go golden + daemon AI item");
     std::printf("  FIRST DIFF: %s\n", d.c_str());
   }
 
@@ -221,13 +248,50 @@ int main() {
   check(r.action == CmdAction::Local && r.ok && s5.theme == "theme-0",
         "cmd: theme select applies");
 
+  // C4b. 颜色组（130/140/145 曾被 isLocalCommandId 漏掉，Go 退休后变死项）
+  check(isLocalCommandId(130) && isLocalCommandId(140) &&
+            isLocalCommandId(145),
+        "cmd: color group ids are local");
+  {
+    MenuState sc = state;
+    r = handleCommand(130, sc);
+    check(r.action == CmdAction::Local && r.ok &&
+              sc.hlColor == "#c6ddf9",
+          "cmd: highlight color applies");
+    r = handleCommand(145, sc);
+    check(r.action == CmdAction::Local && r.ok &&
+              sc.hlTextColor == "#000000",
+          "cmd: highlight text color applies");
+  }
+
+  // C4c. 5000 段（WebDAV/云剪贴板）不是主题命令；否则打开配置会先
+  // ensureEngine/onActivate，全新用户冷启动最长等 30 秒。
+  check(!isLocalCommandId(ID_WEBDAV_SETTINGS) &&
+            !isLocalCommandId(ID_CLOUD_CLIPBOARD_TEST) &&
+            !isLocalCommandId(ID_CLOUD_CLIPBOARD_ENABLED) &&
+            !isLocalCommandId(ID_CLOUD_CLIPBOARD_SETTINGS),
+        "cmd: 5001-5004 are not local theme ids");
+
+  // C4d. 自定义颜色命令把主题切 custom，并同步注释色（Go 语义）。
+  {
+    MenuState sc = state;
+    sc.theme = "moqi";
+    r = handleCommand(140, sc);  // 字体颜色 黑色
+    check(r.action == CmdAction::Local && r.ok && sc.theme == "custom" &&
+              sc.commentColor == sc.textColor,
+          "cmd: text color switches theme to custom + syncs comment");
+    r = handleCommand(146, sc);  // 高亮文字 白色
+    check(sc.commentHlColor == sc.hlTextColor,
+          "cmd: highlight text color syncs comment highlight");
+  }
+
   // C5. 竖排切换
   MenuState s6 = state;
   r = handleCommand(ID_APPEARANCE_LAYOUT_VERTICAL, s6);
   check(r.action == CmdAction::Local && r.ok && s6.horizontal == false,
         "cmd: vertical layout applies");
 
-  // C6. 输入状态共享 / 输入设置
+  // C6. 输入状态固定 / 输入设置
   MenuState s7 = state;
   r = handleCommand(ID_SHARED_INPUT_STATE, s7);
   check(r.action == CmdAction::Local && r.ok &&
@@ -255,11 +319,11 @@ int main() {
   check(diffJson(buildMenu(s8), golden, "m").empty(),
         "cmd: proxied ids leave state untouched");
 
-  // C8. 本地静态集合（文件模板/文件夹/帮助/维护回执）
-  const int localIds[] = {18, 19, 222, ID_HELP_DOCS, ID_DISCUSSIONS,
-                          ID_USER_DIR, ID_SHARED_DIR, ID_SYNC_DIR, ID_LOG_DIR,
-                          ID_LAUNCHER_DEBUG_LOG, ID_LAUNCHER_RESTART_BACKENDS,
-                          ID_LAUNCHER_QUIT};
+  // C8. 本地静态集合（文件模板/AI 配置/文件夹/帮助/维护回执）
+  const int localIds[] = {18, 19, 222, ID_AI_CONFIG, ID_HELP_DOCS,
+                          ID_DISCUSSIONS, ID_USER_DIR, ID_SHARED_DIR,
+                          ID_SYNC_DIR, ID_LOG_DIR, ID_LAUNCHER_DEBUG_LOG,
+                          ID_LAUNCHER_RESTART_BACKENDS, ID_LAUNCHER_QUIT};
   bool allLocal = true;
   for (int id : localIds) {
     if (!isLocalCommandId(id)) {
@@ -274,6 +338,15 @@ int main() {
     }
   }
   check(allLocal, "cmd: folders/help/launcher are local receipts");
+
+  // C9. AI 配置命令不触碰任何状态（纯打开动作在应用层）
+  {
+    MenuState s9 = state;
+    CommandResult pr = handleCommand(ID_AI_CONFIG, s9);
+    check(pr.action == CmdAction::Local && pr.ok &&
+              diffJson(buildMenu(s9), golden, "m").empty(),
+          "cmd: ai config opens without state change");
+  }
 
   std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
   return g_fail == 0 ? 0 : 1;

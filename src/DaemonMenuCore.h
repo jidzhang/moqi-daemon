@@ -63,6 +63,9 @@ enum CommandIds {
   ID_SHARED_INPUT_STATE = 210,
   ID_INPUT_AUTO_PAIR_QUOTES = 220,
   ID_INPUT_SEMICOLON_SELECT_SECOND = 221,
+  // daemon 专属新增（Go 无此命令）：打开 ai_config.json。外观 213-225 之外
+  // 的独立号，须同时列入 isLocalCommandId 的显式集合。
+  ID_AI_CONFIG = 226,
   ID_WEBDAV_SETTINGS = 5004,
   ID_CLOUD_CLIPBOARD_TEST = 5003,
   ID_CLOUD_CLIPBOARD_ENABLED = 5002,
@@ -80,11 +83,6 @@ struct SchemaEntry {
   bool current = false;
 };
 
-struct SchemeSetEntry {
-  std::string name;
-  bool current = false;
-};
-
 struct ThemeEntry {
   std::string id;   // 归一化小写
   std::string label;
@@ -96,24 +94,27 @@ struct MenuState {
   std::vector<MenuSwitchDef> switches;   // save_options 顺序（已过滤到 schema 开关）
   std::map<std::string, bool> options;   // rimeGetOption 快照
   std::vector<SchemaEntry> schemas;
-  std::vector<SchemeSetEntry> schemeSets;
   std::vector<ThemeEntry> themes;
 
   // appearance_config.json 的菜单可见字段
   std::string theme;                     // candidate_theme（小写归一比较）
   bool inlinePreedit = false;
   bool horizontal = true;                // 候选排列
-  int perRow = 7;
+  int perRow = 7;                        // 生效值（min(配置, 总候选)）
+  int perRowRaw = 9;                     // 配置原值（3/5/7/9）——落盘写这个，
+                                         // 否则总候选改大后每行数跟着缩水
   int spacing = 20;
   int candCount = 7;
   int fontPoint = 14;
   int commentFontPoint = 12;
-  std::string fontFace = "Segoe UI";
+  std::string fontFace = "Microsoft YaHei UI";
   std::string commentFontFace = "Consolas";
   std::string bgColor = "#ffffff";
   std::string hlColor = "#c6ddf9";
   std::string textColor = "#000000";
   std::string hlTextColor = "#000000";
+  std::string commentColor = "#000000";
+  std::string commentHlColor = "#000000";
 
   bool inputStateShared = false;
   bool autoPairQuotes = false;

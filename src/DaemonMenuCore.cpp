@@ -106,27 +106,15 @@ Json::Value buildMenu(const MenuState& state) {
   for (const auto& sw : state.switches) {
     Json::Value it = makeItem(ID_SWITCH_BASE + i, switchMenuText(sw, state.options.count(sw.name) && state.options.at(sw.name)));
     setChecked(it, state.options.count(sw.name) && state.options.at(sw.name));
+    // daemon 专属字段：选项名。64 位客户端的 DLL 据此在本地引擎上直接
+    // 翻转（RPC 到这里切的是 daemon 会话，对进程内引擎无效）。
+    it["option"] = sw.name;
     items.append(it);
     ++i;
   }
   if (!state.switches.empty()) items.append(makeSeparator());
 
-  // 2) 切换方案集
-  if (!state.schemeSets.empty()) {
-    Json::Value group = makeParent("切换方案集");
-    int n = 0;
-    for (const auto& ss : state.schemeSets) {
-      Json::Value it = makeItem(ID_SCHEME_SET_BASE + n, ss.name);
-      setChecked(it, ss.current);
-      group["submenu"].append(it);
-      ++n;
-    }
-    group["submenu"].append(makeSeparator());
-    group["submenu"].append(makeItem(ID_DOWNLOAD_SCHEME_SET, "下载方案集(&D)"));
-    items.append(group);
-  }
-
-  // 3) 输入方案
+  // 2) 输入方案
   if (!state.schemas.empty()) {
     Json::Value group = makeParent("输入方案(&I)");
     int n = 0;
@@ -141,18 +129,16 @@ Json::Value buildMenu(const MenuState& state) {
     items.append(group);
   }
 
-  // 4) 置顶短语/简拼/更新/刷新
-  if (!state.schemeSets.empty() || !state.schemas.empty()) {
-    items.append(makeItem(18, "打开置顶短语"));
-    items.append(makeItem(19, "打开超级简拼"));
-    items.append(makeItem(ID_UPDATE_CONFIG, "更新配置(&P)"));
-    items.append(makeItem(ID_DEPLOY, "刷新配置(&R)"));
-    items.append(makeSeparator());
-  }
+  // 3) 置顶短语/简拼/更新/刷新
+  items.append(makeItem(18, "打开置顶短语"));
+  items.append(makeItem(19, "打开超级简拼"));
+  items.append(makeItem(ID_UPDATE_CONFIG, "更新配置(&P)"));
+  items.append(makeItem(ID_DEPLOY, "刷新配置(&R)"));
+  items.append(makeSeparator());
 
   // 5) 输入状态共享
   {
-    Json::Value it = makeItem(ID_SHARED_INPUT_STATE, "输入状态共享");
+    Json::Value it = makeItem(ID_SHARED_INPUT_STATE, "输入状态固定");
     setChecked(it, state.inputStateShared);
     items.append(it);
   }
@@ -274,20 +260,23 @@ Json::Value buildMenu(const MenuState& state) {
     Json::Value s = makeItem(ID_INPUT_SEMICOLON_SELECT_SECOND, "分号键次选");
     setChecked(s, state.semicolonSecond);
     group["submenu"].append(s);
+    // daemon 专属：多数用户找不到 ai_config.json 在哪，就地用记事本打开。
+    group["submenu"].append(makeItem(ID_AI_CONFIG, "配置AI助手"));
     items.append(group);
   }
 
-  // 8) 同步设置（命令仍代理 Go）
+  // 8) 同步设置（命令本地实现）
   {
     Json::Value group = makeParent("同步设置");
+    // 云剪贴板与 WebDAV 共用 cloud_clipboard.json（base_url/账号/密码/开关/
+    // 最短间隔/热键都在一个文件里），保留一个配置入口，避免两个菜单项
+    // 打开同一文件（2026-11-03 Go 退休时合并）。
     group["submenu"].append(makeItem(ID_WEBDAV_SETTINGS, "WebDAV 配置..."));
     group["submenu"].append(makeItem(ID_CLOUD_CLIPBOARD_TEST, "测试 WebDAV"));
     Json::Value c =
         makeItem(ID_CLOUD_CLIPBOARD_ENABLED, "启用云剪贴板");
     setChecked(c, state.cloudEnabled);
     group["submenu"].append(c);
-    group["submenu"].append(
-        makeItem(ID_CLOUD_CLIPBOARD_SETTINGS, "云剪贴板设置..."));
     group["submenu"].append(makeItem(ID_SYNC, "同步用户词库"));
     items.append(group);
   }
@@ -345,6 +334,7 @@ bool strCommand(const StrOption* opts, size_t n, int id, std::string& out) {
 
 bool isLocalCommandId(int id) {
   if (id == 18 || id == 19 || id == 222 || // 置顶短语/超级简拼/成对符号设置
+      id == ID_AI_CONFIG ||               // 打开 ai_config.json（daemon 专属）
       id == ID_HELP_DOCS || id == ID_DISCUSSIONS || id == ID_USER_DIR ||
       id == ID_SHARED_DIR || id == ID_SYNC_DIR || id == ID_LOG_DIR ||
       id == ID_LAUNCHER_DEBUG_LOG || id == ID_LAUNCHER_RESTART_BACKENDS ||
@@ -355,13 +345,18 @@ bool isLocalCommandId(int id) {
       id == ID_TRADITIONALIZATION) {
     return true;
   }
-  if (id >= ID_SWITCH_BASE) return true;    // 开关（含越界由 handle 判 ok）
+  if (id >= ID_SWITCH_BASE && id < ID_SCHEME_SET_BASE) return true; // 开关
   if (id >= ID_SCHEMA_BASE && id < ID_SCHEME_SET_BASE) return true; // 方案
-  if (id >= ID_APPEARANCE_THEME_BASE) return true;                  // 主题
-  if ((id >= 100 && id <= 127) || (id >= 170 && id <= 201) ||
-      (id >= 213 && id <= 225)) {
-    return true; // 外观数值/字串组
+  // 主题号是 4000+序号。必须封上界：5001-5004（WebDAV/云剪贴板）也 >=4000，
+  // 旧写法会把它们当主题命令，先走 ensureEngine/onActivate（冷启动最长 30s），
+  // 再在 handleCommand 里越界落空。打开配置文件不该等引擎。
+  if (id >= ID_APPEARANCE_THEME_BASE && id < ID_APPEARANCE_THEME_BASE + 1000) {
+    return true;
   }
+  // 外观命令全段 100-225（含 130-147 的颜色组——旧范围漏了 128-147，
+  // Go 在世时靠代理兜底，退休后这三组颜色菜单会变成死项；2026-11-03
+  // 全菜单扫描实测发现）。
+  if (id >= 100 && id <= 225) return true;
   return false;
 }
 
@@ -409,8 +404,9 @@ CommandResult handleCommand(int id, MenuState& state) {
     return r;
   }
 
-  // 主题
-  if (id >= ID_APPEARANCE_THEME_BASE) {
+  // 主题（4000-4999；5000+ 是云/WebDAV，不能落进这里）
+  if (id >= ID_APPEARANCE_THEME_BASE &&
+      id < ID_APPEARANCE_THEME_BASE + 1000) {
     size_t index = (size_t)(id - ID_APPEARANCE_THEME_BASE);
     if (index < state.themes.size()) {
       state.theme = state.themes[index].id;
@@ -441,6 +437,13 @@ CommandResult handleCommand(int id, MenuState& state) {
   } else if (id == ID_APPEARANCE_LAYOUT_VERTICAL ||
              id == ID_APPEARANCE_LAYOUT_HORIZONTAL) {
     state.horizontal = (id == ID_APPEARANCE_LAYOUT_HORIZONTAL);
+    if (state.horizontal) {
+      // 从竖排切回横排：原值可能已不可用（竖排落盘写 0/1），回落到 9。
+      int raw = state.perRowRaw;
+      if (raw != 3 && raw != 5 && raw != 7 && raw != 9) raw = 9;
+      state.perRowRaw = raw;
+      state.perRow = raw < state.candCount ? raw : state.candCount;
+    }
     local();
   } else {
     // 数值/字串外观组
@@ -491,6 +494,7 @@ CommandResult handleCommand(int id, MenuState& state) {
     r.customizeUi = Json::Value(Json::objectValue);
     if (numCommand(perRow, 4, id, num)) {
       state.perRow = num;
+      state.perRowRaw = num;
       r.customizeUi["candPerRow"] = num;
       local();
     } else if (numCommand(spacing, 6, id, num)) {
@@ -517,20 +521,32 @@ CommandResult handleCommand(int id, MenuState& state) {
       r.customizeUi["candCommentFontName"] = str;
       local();
     } else if (strCommand(bgs, 3, id, str)) {
+      // Go applyAppearanceCommand：任一自定义颜色命令都把主题切到 custom，
+      // 否则菜单仍勾着原主题、实际颜色却已变。
+      state.theme = "custom";
       state.bgColor = str;
       r.customizeUi["candBackgroundColor"] = str;
       local();
     } else if (strCommand(hls, 3, id, str)) {
+      state.theme = "custom";
       state.hlColor = str;
       r.customizeUi["candHighlightColor"] = str;
       local();
     } else if (strCommand(txts, 3, id, str)) {
+      state.theme = "custom";
       state.textColor = str;
+      // Go 同步注释色：主题/自定义正文色变化时注释跟随，否则深色背景下
+      // 注释仍是旧色，看不清。
+      state.commentColor = str;
       r.customizeUi["candTextColor"] = str;
+      r.customizeUi["candCommentColor"] = str;
       local();
     } else if (strCommand(htx, 3, id, str)) {
+      state.theme = "custom";
       state.hlTextColor = str;
+      state.commentHlColor = str;
       r.customizeUi["candHighlightTextColor"] = str;
+      r.customizeUi["candCommentHighlightColor"] = str;
       local();
     } else {
       r.customizeUi = Json::Value(); // 未命中，清掉
@@ -539,10 +555,11 @@ CommandResult handleCommand(int id, MenuState& state) {
 
   // 静态本地集（文件模板/文件夹/帮助/维护）：回执即可，动作在应用层
   if (r.action == CmdAction::Proxy &&
-      (id == 18 || id == 19 || id == 222 || id == ID_HELP_DOCS ||
-       id == ID_DISCUSSIONS || id == ID_USER_DIR || id == ID_SHARED_DIR ||
-       id == ID_SYNC_DIR || id == ID_LOG_DIR || id == ID_LAUNCHER_DEBUG_LOG ||
-       id == ID_LAUNCHER_RESTART_BACKENDS || id == ID_LAUNCHER_QUIT)) {
+      (id == 18 || id == 19 || id == 222 || id == ID_AI_CONFIG ||
+       id == ID_HELP_DOCS || id == ID_DISCUSSIONS || id == ID_USER_DIR ||
+       id == ID_SHARED_DIR || id == ID_SYNC_DIR || id == ID_LOG_DIR ||
+       id == ID_LAUNCHER_DEBUG_LOG || id == ID_LAUNCHER_RESTART_BACKENDS ||
+       id == ID_LAUNCHER_QUIT)) {
     local();
   }
   return r;

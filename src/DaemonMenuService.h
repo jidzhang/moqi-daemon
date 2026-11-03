@@ -10,11 +10,17 @@
 
 namespace Moqi {
 
+// 用随包编辑器打开文本文件：{installRoot}\Notepad4\Notepad4.exe（zh-Hans
+// Win32 单文件，BSD-3）→ 系统 notepad.exe → 系统关联。语言栏"打开 xx 配置"
+// 类命令统一走这里（2026-11-03 用户定：裸记事本太傻，带语法高亮）。
+void openTextInBundledEditor(const std::wstring& installRoot,
+                             const std::wstring& file);
+
 struct ThemeDefinition {
   std::string id;
   std::string label;
-  // appearance 值（当前内置主题只带 4 个颜色键）
-  std::string bgColor, hlColor, textColor, hlTextColor;
+  // appearance_config 片段（内置主题只有颜色键；导入皮肤可带字体/排版）。
+  Json::Value appearance;
 };
 
 class DaemonMenuService {
@@ -33,6 +39,12 @@ public:
 
   // 文件夹/URL 命令的实际打开动作（本地命令里 id 对应的目标）。
   void openCommandTarget(int id);
+
+  // Go 退休：ON_ACTIVATE 的本地应答（等价 Go addButtons+customizeUi+
+  // removePreservedKey 三件套）。图标按当前 ascii/full 选 eng/chi、half/full。
+  Json::Value buildActivatePayload(DaemonEngine& engine);
+  // customizeUi 全量（GUI 变更随响应下发的部分；导入皮肤后实时刷新用）。
+  Json::Value buildCustomizeUi(const Menu::MenuState& state);
 
 private:
   std::vector<Menu::MenuSwitchDef> loadSwitchDefs(DaemonEngine& engine);

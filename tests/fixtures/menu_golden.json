@@ -81,47 +81,6 @@
   },
   {
     "id": 0,
-    "text": "切换方案集",
-    "checked": false,
-    "enabled": true,
-    "submenu": [
-      {
-        "id": 3000,
-        "text": "Rime",
-        "checked": true,
-        "enabled": true,
-        "submenu": [],
-        "separator": false
-      },
-      {
-        "id": 3001,
-        "text": "RimeInProc",
-        "checked": false,
-        "enabled": true,
-        "submenu": [],
-        "separator": false
-      },
-      {
-        "id": 0,
-        "text": "",
-        "checked": false,
-        "enabled": true,
-        "submenu": [],
-        "separator": true
-      },
-      {
-        "id": 23,
-        "text": "下载方案集(&D)",
-        "checked": false,
-        "enabled": true,
-        "submenu": [],
-        "separator": false
-      }
-    ],
-    "separator": false
-  },
-  {
-    "id": 0,
     "text": "输入方案(&I)",
     "checked": false,
     "enabled": true,
@@ -235,7 +194,7 @@
   },
   {
     "id": 210,
-    "text": "输入状态共享",
+    "text": "输入状态固定",
     "checked": false,
     "enabled": true,
     "submenu": [],
@@ -1041,14 +1000,6 @@
       {
         "id": 5002,
         "text": "启用云剪贴板",
-        "checked": false,
-        "enabled": true,
-        "submenu": [],
-        "separator": false
-      },
-      {
-        "id": 5001,
-        "text": "云剪贴板设置...",
         "checked": false,
         "enabled": true,
         "submenu": [],
