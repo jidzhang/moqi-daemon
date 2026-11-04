@@ -10,6 +10,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <thread>
@@ -244,7 +245,10 @@ bool runFullRedeployImpl(std::string* message) {
   }
   // 1) 重新灌 in-proc patch（用户可能改过方案集目录里的 custom yaml）。
   const std::wstring schemeDir = currentSchemeDir();
-  if (!schemeDir.empty()) {
+  // 单引擎架构：daemon 的用户目录就是共享目录（%APPDATA%\Moqi\<方案集>），
+  // 重部署直接读用户放进去的整包配置，不再需要同步/挂载步骤。
+  if (!schemeDir.empty() &&
+      !std::filesystem::exists(schemeDir + L"\\default.yaml")) {
     const std::string patch = buildInProcCustomPatch(
         schemeDir, utf8ToWs(runtime.sharedDataDirUtf8()));
     const std::wstring patchPath =

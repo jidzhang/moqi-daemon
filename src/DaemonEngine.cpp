@@ -46,10 +46,10 @@ void DaemonEngine::ensureEngine() {
   const wchar_t* dllDirEnv = _wgetenv(L"MOQI_RIME_DLL_DIR");
   const std::wstring dllDir =
       dllDirEnv && *dllDirEnv ? std::wstring(dllDirEnv) : g_daemonProgramDir;
-  // 2026-11-02 学习闭环：daemon 独占主词典（Moqi\UserDictMaster，userdb
-  // 开启）——Go 子进程仍占 Moqi\<方案集>，LevelDB 锁互不冲突；DLL 各进程的
-  // 学习快照汇入这里，首启从 Go 时代目录一次性迁移。
-  const std::wstring masterDir = moqiAppDataDir() + L"\\UserDictMaster";
+  // 2026-11-04 单引擎架构：daemon 直接使用标准 Rime 用户目录
+  // %APPDATA%\Moqi\<方案集>（默认 Rime）。雾凇等整包按官方方式解压到
+  // 这里即可，用户词典/学习/部署全部落在标准位置。
+  const std::wstring masterDir = sharedUserConfigDir();
   runtime.requestInit(g_daemonProgramDir, g_daemonBackendDir, dllDir, masterDir);
   const ULONGLONG deadline = ::GetTickCount64() + 30000;
   while (!runtime.ready() && !runtime.failed() && ::GetTickCount64() < deadline) {
@@ -296,19 +296,34 @@ bool DaemonEngine::refreshPageSize() {
   if (!runtime.rimeGetCurrentSchema(sessionId_, schemaId, sizeof(schemaId))) {
     return false;
   }
-  // 刚创建的会话停在 ".default"：page_size 必须写在真正会被选用的方案配置
-  // 上（否则写进 ".default" 的空 config，引擎按 default.yaml 的 9 翻页，而
-  // 界面只显示 candidateCount_ 个，每页第 8、9 个候选永远不可达——"xin 没
-  // 有鑫"实报）。
-  std::string target = schemaId;
-  if (target.empty() || target[0] == '.') {
-    target = loadSyncedSchemaId();
-    if (target.empty()) {
-      target = "rime_frost";
+  // 刚创建的会话停在 ".default"：优先用保存的方案，但必须确认它还在当前
+  // 方案列表里——用户换成雾凇等整包后旧的 rime_frost 已不存在，此时回退到
+  // default.yaml 的首个方案（整包兼容）。
+  std::string target;
+  if (schemaId[0] != '\0' && schemaId[0] != '.') {
+    target = schemaId;
+  } else {
+    const std::string saved = loadSyncedSchemaId();
+    std::string first;
+    bool savedFound = false;
+    if (runtime.rimeGetSchemaList != nullptr &&
+        runtime.rimeFreeSchemaList != nullptr) {
+      rimeapi::RimeSchemaList list = {};
+      if (runtime.rimeGetSchemaList(&list)) {
+        for (size_t i = 0; i < list.size; ++i) {
+          const char* id = list.list[i].schema_id;
+          if (id == nullptr || id[0] == '\0') continue;
+          if (first.empty()) first = id;
+          if (!saved.empty() && saved == id) savedFound = true;
+        }
+        runtime.rimeFreeSchemaList(&list);
+      }
     }
-    if (runtime.rimeSelectSchema != nullptr) {
-      runtime.rimeSelectSchema(sessionId_, target.c_str());
-    }
+    target = savedFound ? saved : first;
+    if (target.empty()) target = saved.empty() ? "rime_frost" : saved;
+  }
+  if (runtime.rimeSelectSchema != nullptr) {
+    runtime.rimeSelectSchema(sessionId_, target.c_str());
   }
   rimeapi::Config config = {};
   if (!runtime.rimeSchemaOpen(target.c_str(), &config)) {

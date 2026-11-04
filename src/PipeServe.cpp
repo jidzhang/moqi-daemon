@@ -273,6 +273,7 @@ int PipeServe::run() {
        ::GetLastError() == ERROR_ALREADY_EXISTS);
 
   bool firstInstance = true;
+  int retries = 0;
   for (;;) {
     if (impl_->stopRequested) break;
     // FIRST_PIPE_INSTANCE 只在首个实例上用：它要求名字尚不存在——
@@ -297,6 +298,9 @@ int PipeServe::run() {
           if (probe != INVALID_HANDLE_VALUE) {
             ::CloseHandle(probe);
             live = true;
+          } else if (::GetLastError() == ERROR_ACCESS_DENIED) {
+            // 管道存在但当前完整性级别打不开：同样视为已有实例。
+            live = true;
           }
         }
         if (live) {
@@ -304,9 +308,16 @@ int PipeServe::run() {
           break;
         }
       }
+      // 既看不到互斥体、也打不开管道时不能无限重试（实测会留下多个
+      // daemon 进程占着引擎）。10 秒仍拿不到就退出，让持有者服务客户端。
+      if (++retries >= 20) {
+        daemonLogExtern(L"[serve] pipe unavailable after retries; exiting");
+        break;
+      }
       ::Sleep(500);
       continue;
     }
+    retries = 0;
     if (firstInstance) {
       impl_->ownsPipe.store(true);
       daemonLogExtern(L"[serve] pipe ready pid=" +
