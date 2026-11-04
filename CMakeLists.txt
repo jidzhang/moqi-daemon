@@ -1,6 +1,14 @@
 ﻿cmake_minimum_required(VERSION 3.20)
 project(MoqiDaemon CXX)
 
+# 新系统不一定装了 VC++ x86 运行库；MoqiDaemon 是整包里唯一动态链接 CRT
+# 的组件（TSF DLL/SetupHelper 都是静态）。这里统一静态链接，避免 daemon
+# 起不来导致 32 位应用直接上屏、语言栏按钮也不出现。
+if(POLICY CMP0091)
+  cmake_policy(SET CMP0091 NEW)
+endif()
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 set(CMAKE_CXX_STANDARD 20)
 add_definitions(/D_UNICODE=1 /DUNICODE=1 /utf-8 /DMOQI_ALLOW_X86_ENGINE)
 
