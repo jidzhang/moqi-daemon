@@ -31,7 +31,11 @@ kernel32 = ctypes.windll.kernel32
 APPDATA = os.environ["APPDATA"]
 MOQI = os.path.join(APPDATA, "Moqi")
 BACKUP = os.path.join(r"F:\work\IME", "audit-profile-backup")
-PIPE = r"\\.\pipe\%s\MoqiIM\Launcher" % os.environ.get("USERNAME", "")
+_SESSION_ID = ctypes.c_ulong()
+kernel32.ProcessIdToSessionId(kernel32.GetCurrentProcessId(),
+                              ctypes.byref(_SESSION_ID))
+PIPE = r"\\.\pipe\%s\MoqiIM\Launcher.%d" % (
+    os.environ.get("USERNAME", ""), _SESSION_ID.value)
 
 _results = []
 
