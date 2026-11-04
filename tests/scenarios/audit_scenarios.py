@@ -242,7 +242,8 @@ def restore_profile():
     if os.path.exists(MOQI):
         shutil.rmtree(MOQI, ignore_errors=True)
     if os.path.exists(BACKUP):
-        shutil.copytree(BACKUP, MOQI)
+        # 残留目录可能被运行中的客户端占用；dirs_exist_ok 允许合并恢复。
+        shutil.copytree(BACKUP, MOQI, dirs_exist_ok=True)
     # Bring the installed daemon back for the real IME.
     installed = os.path.join(r"C:\Program Files (x86)\MoqiIM", "MoqiDaemon.exe")
     if os.path.exists(installed):
@@ -280,7 +281,7 @@ def main():
         check("fresh: font is Microsoft YaHei UI",
               ui.get("candFontName") == "Microsoft YaHei UI",
               "ui=%r" % ui)
-        patch_path = os.path.join(MOQI, "UserDictMaster", "rime_frost.custom.yaml")
+        patch_path = os.path.join(MOQI, "Rime", "rime_frost.custom.yaml")
         patch = open(patch_path, encoding="utf-8", errors="replace").read() if os.path.exists(patch_path) else ""
         check("fresh: local_behavior patch generated",
               "disable_user_dict_for_patterns" in patch,
