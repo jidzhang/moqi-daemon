@@ -630,11 +630,12 @@ bool upsertImportedThemes(const Json::Value& newThemes,
     theme["source_file"] = sourceFile;
     bool replaced = false;
     for (size_t k = 0; k < list.size(); ++k) {
+      const Json::ArrayIndex ai = static_cast<Json::ArrayIndex>(k);
       if (ids[k] != theme["id"].asString()) continue;
       // 同 id 去重：仅同一皮肤文件可刷新，不覆盖其它来源。
-      if (list[k].get("source_file", "").asString() == sourceFile &&
-          list[k].get("source", "").asString() == "imported") {
-        list[k] = theme;
+      if (list[ai].get("source_file", "").asString() == sourceFile &&
+          list[ai].get("source", "").asString() == "imported") {
+        list[ai] = theme;
       }
       replaced = true;
       break;
