@@ -1010,7 +1010,11 @@ int main(int argc, char** argv) {
   //（2026-11-03 验收实测：升级机上老 DLL 守护拉起 MoqiLaunch → 又拉一个
   // stdin daemon，与 serve daemon 抢锁，管道假死）。
   if (!serveMode) {
-    HANDLE probe = ::CreateMutexW(nullptr, FALSE, L"MoqiLaunchMutex");
+    DWORD sessionId = 0;
+  ::ProcessIdToSessionId(::GetCurrentProcessId(), &sessionId);
+  const std::wstring probeMutex =
+      L"MoqiLaunchMutex." + std::to_wstring(sessionId);
+  HANDLE probe = ::CreateMutexW(nullptr, FALSE, probeMutex.c_str());
     const bool already = probe != nullptr &&
                          ::GetLastError() == ERROR_ALREADY_EXISTS;
     if (probe != nullptr) {

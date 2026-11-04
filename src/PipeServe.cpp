@@ -237,7 +237,10 @@ int PipeServe::run() {
   if (!::GetUserNameW(user, &userLen)) {
     return 1;
   }
-  impl_->pipeName = std::wstring(L"\\\\.\\pipe\\") + user + L"\\MoqiIM\\Launcher";
+  DWORD sessionId = 0;
+  ::ProcessIdToSessionId(::GetCurrentProcessId(), &sessionId);
+  impl_->pipeName = std::wstring(L"\\\\.\\pipe\\") + user +
+                    L"\\MoqiIM\\Launcher." + std::to_wstring(sessionId);
   // 测试钩子：换名绑定，避开真链路上 DLL 自愈复活的 MoqiLaunch 抢管道。
   if (const wchar_t* overridePipe = _wgetenv(L"MOQI_SERVE_PIPE")) {
     impl_->pipeName = overridePipe;
@@ -263,12 +266,12 @@ int PipeServe::run() {
   }
   // 测试钩子：换名互斥体，允许场景测试与真实 daemon 并行（默认生产名）。
   const wchar_t* overrideMutex = _wgetenv(L"MOQI_SERVE_MUTEX");
-  LPCWSTR mutexName =
+  std::wstring mutexName =
       (overrideMutex != nullptr && overrideMutex[0] != L'\0')
           ? overrideMutex
-          : L"MoqiLaunchMutex";
+          : (L"MoqiLaunchMutex." + std::to_wstring(sessionId));
   impl_->singleInstance = ::CreateMutexW(sd != nullptr ? &sa : nullptr,
-                                         FALSE, mutexName);  const bool alreadyRunning =
+                                         FALSE, mutexName.c_str());  const bool alreadyRunning =
       (impl_->singleInstance != nullptr &&
        ::GetLastError() == ERROR_ALREADY_EXISTS);
 
@@ -305,14 +308,15 @@ int PipeServe::run() {
         }
         if (live) {
           daemonLogExtern(L"[serve] another instance owns the pipe; exiting");
-          break;
+          // 直接终止：后台线程（clipmon/COM）会把进程留住，造成多个 daemon。
+          ::ExitProcess(0);
         }
       }
       // 既看不到互斥体、也打不开管道时不能无限重试（实测会留下多个
       // daemon 进程占着引擎）。10 秒仍拿不到就退出，让持有者服务客户端。
       if (++retries >= 20) {
         daemonLogExtern(L"[serve] pipe unavailable after retries; exiting");
-        break;
+        ::ExitProcess(0);
       }
       ::Sleep(500);
       continue;
