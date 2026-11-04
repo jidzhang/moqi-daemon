@@ -244,17 +244,22 @@ int PipeServe::run() {
   }
 
   // 单实例互斥体：沿用 MoqiLaunchMutex（TSF DLL 的存活探测名，零改动兼容）。
-  // 安全描述符与管道一致（全员访问 + 中完整性），否则安装器以管理员拉起
-  // 的 daemon 创建高完整性互斥体后，普通权限的 TSF/新 daemon 打不开它，
-  // 会误判成“首实例”并卡在 CreateNamedPipe 重试循环（2026-11-04 实测
-  // 出现 3 个 daemon 同时存活）。管道名已按用户名隔离，跨用户仍不可达。
+  // 安全描述符与管道一致；否则安装器以管理员拉起 daemon 时创建高完整性
+  // 互斥体，普通 TSF/新 daemon 打不开，会误判“首实例”并卡在 CreateNamedPipe
+  // 重试（2026-11-04 实测 3 个 daemon 并存）。
+  // AC = ALL APPLICATION PACKAGES，标签降为 Low：UWP/AppContainer（便笺等）
+  // 以低完整性运行，默认 Medium 标签的管道/互斥体对它是 no-write-up，
+  // 连不上 daemon 就只能把按键放行成英文。管道名按用户名隔离，跨用户仍不可达。
   SECURITY_ATTRIBUTES sa = {};
   PSECURITY_DESCRIPTOR sd = nullptr;
   if (::ConvertStringSecurityDescriptorToSecurityDescriptorW(
-          L"D:(A;;GA;;;WD)S:(ML;;NW;;;ME)", SDDL_REVISION_1, &sd, nullptr)) {
+          L"D:(A;;GA;;;WD)(A;;GA;;;AC)S:(ML;;NW;;;LW)", SDDL_REVISION_1, &sd,
+          nullptr)) {
     sa.nLength = sizeof(sa);
     sa.lpSecurityDescriptor = sd;
     sa.bInheritHandle = FALSE;
+  } else {
+    daemonLogExtern(L"[serve] pipe SDDL parse failed; using default DACL");
   }
   // 测试钩子：换名互斥体，允许场景测试与真实 daemon 并行（默认生产名）。
   const wchar_t* overrideMutex = _wgetenv(L"MOQI_SERVE_MUTEX");
