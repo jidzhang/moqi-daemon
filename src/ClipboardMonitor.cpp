@@ -18,6 +18,7 @@ namespace Moqi {
 
 // main.cpp 的日志出口（在 Moqi 命名空间、非匿名——否则内部链接导致 LNK2019）。
 void daemonLogExtern(const std::wstring& msg);
+void daemonLogDebugExtern(const std::wstring& msg);
 
 namespace {
 
@@ -60,7 +61,9 @@ std::string readClipboardText(HWND owner) {
 LRESULT CALLBACK monitorWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   switch (msg) {
     case WM_CLIPBOARDUPDATE: {
-      daemonLogExtern(L"[clipmon] WM_CLIPBOARDUPDATE received; arming timer");
+      // 常规剪贴板事件走 debug 档（error 档不落，用户反馈日志不受控）。
+      daemonLogDebugExtern(
+          L"[clipmon] WM_CLIPBOARDUPDATE received; arming timer");
       // 500ms 防抖（Go WM_FLUSH_CLIPBOARD_UPLOAD 模式：反复触发时只取最后一次）
       ::SetTimer(hwnd, 1, kDebounceMs, nullptr);
       return 0;
@@ -69,11 +72,11 @@ LRESULT CALLBACK monitorWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       if (wp == 1) {
         ::KillTimer(hwnd, 1);
         const std::string text = readClipboardText(hwnd);
-        daemonLogExtern(L"[clipmon] timer fired; text len=" +
-                        std::to_wstring(text.size()));
+        daemonLogDebugExtern(L"[clipmon] timer fired; text len=" +
+                             std::to_wstring(text.size()));
         if (!text.empty() && Moqi::globalCloudSync() != nullptr) {
           Moqi::globalCloudSync()->uploadFromRequest(text);
-          daemonLogExtern(L"[clipmon] uploadFromRequest called");
+          daemonLogDebugExtern(L"[clipmon] uploadFromRequest called");
         }
       }
       return 0;

@@ -86,6 +86,14 @@ target_include_directories(proto_framing_test PRIVATE
 target_link_libraries(proto_framing_test jsoncpp_static)
 add_test(NAME proto_framing_test COMMAND proto_framing_test)
 
+# 产品行为补丁体回归（10-26 配置脱节事故锚：空配置绝不产生毒键；
+# 开关行逐字节锁定）。被测物 = MoqiTextService/LocalBehaviorPatch.h。
+add_executable(local_behavior_patch_test tests/local_behavior_patch_test.cpp)
+target_include_directories(local_behavior_patch_test PRIVATE
+  "${TS_DIR}" "${MOQI_WIN_DIR}/jsoncpp/include")
+target_link_libraries(local_behavior_patch_test jsoncpp_static)
+add_test(NAME local_behavior_patch_test COMMAND local_behavior_patch_test)
+
 # 维护命令回归：皮肤 YAML/JSON 导入解析与落盘（rootOverride 重定向）。
 add_executable(daemon_maintenance_test
   tests/daemon_maintenance_test.cpp

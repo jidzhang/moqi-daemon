@@ -23,6 +23,7 @@ namespace Moqi {
 
 // main.cpp 共用的轻量日志。
 void daemonLogExtern(const std::wstring& msg);
+void daemonLogDebugExtern(const std::wstring& msg);
 
 namespace {
 
@@ -364,9 +365,11 @@ int PipeServe::run() {
     conn->serve = impl_;
     conn->writeLock = std::make_shared<std::mutex>();
     impl_->registerClient(conn->clientId, pipe);
-    daemonLogExtern(L"[serve] client connected: " +
-                    std::wstring(conn->clientId.begin(),
-                                 conn->clientId.end()));
+    // 常规连接生命周期走 debug 档：每次应用激活都会连一次，error 档下
+    // 不应刷屏（用户 2026-11-05 反馈 daemon 日志不受控）。
+    daemonLogDebugExtern(L"[serve] client connected: " +
+                         std::wstring(conn->clientId.begin(),
+                                      conn->clientId.end()));
     HANDLE th = ::CreateThread(nullptr, 0, &clientThread, conn, 0, nullptr);
     if (th == nullptr) {
       impl_->unregisterClient(conn->clientId);

@@ -365,7 +365,8 @@ void dispatch(const Json::Value& req, Json::Value& resp,
             std::lock_guard<std::recursive_mutex> lock(rt.mutex());
             if (rt.rimeSyncUserData() != 0) {
               rt.rimeJoinMaintenanceThread();
-              daemonLog(L"[userdb] master snapshot refreshed after commit");
+              // 每次提交都会跑：error 档下不落（用户反馈 daemon 日志不受控）。
+  daemonLogDebug(L"[userdb] master snapshot refreshed after commit");
             }
           }
           ::EnterCriticalSection(&g_dispatchLock);
