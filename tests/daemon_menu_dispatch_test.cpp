@@ -94,9 +94,7 @@ int main() {
     check(r.action == CmdAction::Proxy && s.theme == "theme-1" &&
               !r.customizeUi.isObject(),
           "cmd: 5001 does not fall into theme branch");
-    // 4999 是最后一个主题号（4000+999，越界）
-    r = handleCommand(4999, s);
-    check(r.action == CmdAction::Proxy, "cmd: 4999 (beyond themes) proxy");
+    // （主题号越界 = 4000+999，已由第 2 节的 out-of-range theme 检查锁定。）
   }
 
   // ---- 4. 竖排→横排 perRowRaw 兜底 ----

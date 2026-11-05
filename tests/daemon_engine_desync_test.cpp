@@ -135,10 +135,10 @@ int main() {
   // userdb 非并发安全（2026-11-05 实证测试进程曾对活词典跑 RepairDB）。
   const wchar_t* userDataDir = _wgetenv(L"MOQI_USER_DATA_DIR");
   if (!userDataDir || !*userDataDir) {
-    std::wcout << L"SKIP: MOQI_USER_DATA_DIR not set "
+    std::wcout << L"FAIL: MOQI_USER_DATA_DIR not set "
                   L"(refusing to touch the real user dictionary)"
                << std::endl;
-    return 0;
+    return 1;  // ctest 无条件注入此变量；走到这里=测试装配坏了，要红不能绿
   }
   ::CreateDirectoryW(userDataDir, nullptr);  // 首次运行时目录可能不存在
 

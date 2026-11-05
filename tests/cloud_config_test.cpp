@@ -14,6 +14,9 @@
 
 #include "DaemonCloudConfig.h"
 #include "DaemonWebDAV.h"
+// 文件读写直接用生产实现（RimeCore 已链进本测试目标）：fixture 与产品
+// 读到的字节永远一致，不另养一份拷贝。
+#include "RimeCore.h"
 
 using Moqi::CloudClipboardConfig;
 using Moqi::CloudClipboardSync;
@@ -33,18 +36,7 @@ void check(bool ok, const char* name) {
   }
 }
 
-std::string readAll(const std::wstring& path) {
-  std::ifstream in(path, std::ios::binary);
-  if (!in) return "";
-  std::ostringstream ss;
-  ss << in.rdbuf();
-  return ss.str();
-}
-
-void writeAll(const std::wstring& path, const std::string& data) {
-  std::ofstream out(path, std::ios::binary | std::ios::trunc);
-  out.write(data.data(), (std::streamsize)data.size());
-}
+// 文件读写走 Moqi::readFileUtf8/writeFileUtf8（生产实现，见顶部 include）。
 
 std::wstring exeDir() {
   wchar_t path[MAX_PATH] = {};
@@ -111,7 +103,7 @@ int main() {
   }
 
   // ---- 2. 完整解析 + 首尾空白 trim + settings_root 归一 ----
-  writeAll(cfgPath,
+  Moqi::writeFileUtf8(cfgPath,
            "{\n"
            "  \"enabled\": true,\n"
            "  \"base_url\": \"  https://dav.example.com/dav  \",\n"
@@ -135,22 +127,22 @@ int main() {
   }
 
   // ---- 3. 兜底：非法/缺省值回落默认 ----
-  writeAll(cfgPath, "{\"min_interval_sec\": 0}\n");
+  Moqi::writeFileUtf8(cfgPath, "{\"min_interval_sec\": 0}\n");
   check(Moqi::loadCloudClipboardConfig(root).minIntervalSec == 10,
         "guard: min_interval 0 -> 10");
-  writeAll(cfgPath, "{\"min_interval_sec\": -5}\n");
+  Moqi::writeFileUtf8(cfgPath, "{\"min_interval_sec\": -5}\n");
   check(Moqi::loadCloudClipboardConfig(root).minIntervalSec == 10,
         "guard: min_interval -5 -> 10");
-  writeAll(cfgPath, "{\"list_hotkey\": \"\"}\n");
+  Moqi::writeFileUtf8(cfgPath, "{\"list_hotkey\": \"\"}\n");
   check(Moqi::loadCloudClipboardConfig(root).listHotkey == "Ctrl+0",
         "guard: empty hotkey -> Ctrl+0");
-  writeAll(cfgPath, "{\"list_hotkey\": \"   \"}\n");
+  Moqi::writeFileUtf8(cfgPath, "{\"list_hotkey\": \"   \"}\n");
   check(Moqi::loadCloudClipboardConfig(root).listHotkey == "Ctrl+0",
         "guard: blank hotkey -> Ctrl+0");
-  writeAll(cfgPath, "{\"list_hotkey\": 123}\n");
+  Moqi::writeFileUtf8(cfgPath, "{\"list_hotkey\": 123}\n");
   check(Moqi::loadCloudClipboardHotkey(root) == "Ctrl+0",
         "guard: non-string hotkey -> Ctrl+0");
-  writeAll(cfgPath, "{oops\n");
+  Moqi::writeFileUtf8(cfgPath, "{oops\n");
   {
     const CloudClipboardConfig cfg = Moqi::loadCloudClipboardConfig(root);
     check(!cfg.enabled && cfg.baseUrl.empty(), "guard: broken json -> defaults");
@@ -159,7 +151,7 @@ int main() {
   }
   // 合法但非对象的 JSON（手改坏成数组/标量）：jsoncpp 的 get/operator[]
   // 会抛 Json::LogicError，曾可让 daemon 启动即崩——必须按"没配置"处理。
-  writeAll(cfgPath, "[]\n");
+  Moqi::writeFileUtf8(cfgPath, "[]\n");
   {
     const CloudClipboardConfig cfg = Moqi::loadCloudClipboardConfig(root);
     check(!cfg.enabled && cfg.minIntervalSec == 10,
@@ -167,7 +159,7 @@ int main() {
     check(Moqi::loadCloudClipboardHotkey(root) == "Ctrl+0",
           "guard: array json hotkey -> Ctrl+0");
   }
-  writeAll(cfgPath, "5\n");
+  Moqi::writeFileUtf8(cfgPath, "5\n");
   check(Moqi::loadCloudClipboardConfig(root).baseUrl.empty(),
         "guard: scalar json -> defaults");
 
@@ -176,7 +168,7 @@ int main() {
   check(Moqi::readCloudClipboardPassword(root) == "s3cret-pw",
         "pw: roundtrip");
   {
-    const std::string raw = readAll(pwPath);
+    const std::string raw = Moqi::readFileUtf8(pwPath);
     check(!raw.empty() && raw.find("s3cret-pw") == std::string::npos,
           "pw: file holds DPAPI ciphertext, not plaintext");
   }
@@ -184,7 +176,7 @@ int main() {
   check(Moqi::readCloudClipboardPassword(root).empty(), "pw: cleared read");
   check(!fileExists(pwPath), "pw: file removed on clear");
   // 密码就位后 isComplete 翻真
-  writeAll(cfgPath,
+  Moqi::writeFileUtf8(cfgPath,
            "{\"enabled\": true, \"base_url\": \"https://dav.example.com\", "
            "\"username\": \"bob\"}\n");
   check(Moqi::saveCloudClipboardPassword("pw1", root), "pw: set pw1");
@@ -196,7 +188,7 @@ int main() {
 
   // ---- 5. JSON 明文密码过渡迁移（Go 退休后的手工配置入口）----
   ::DeleteFileW(pwPath.c_str());
-  writeAll(cfgPath,
+  Moqi::writeFileUtf8(cfgPath,
            "{\"base_url\": \"https://dav.example.com\", \"username\": \"bob\", "
            "\"password\": \"  plainpw  \"}\n");
   {
@@ -207,11 +199,11 @@ int main() {
     check(Moqi::loadCloudClipboardConfig(root).password == "plainpw",
           "migrate: reload prefers dpapi file");
     // 迁移后明文必须立即从 json 抹掉（其余字段原样重写）。
-    check(readAll(cfgPath).find("password") == std::string::npos,
+    check(Moqi::readFileUtf8(cfgPath).find("password") == std::string::npos,
           "migrate: json scrubbed of plaintext password");
   }
   ::DeleteFileW(pwPath.c_str());
-  writeAll(cfgPath, "{\"password\": \"   \"}\n");
+  Moqi::writeFileUtf8(cfgPath, "{\"password\": \"   \"}\n");
   check(Moqi::loadCloudClipboardConfig(root).password.empty() &&
             !fileExists(pwPath),
         "migrate: whitespace-only password not migrated");
@@ -234,7 +226,7 @@ int main() {
     check(back.listHotkey == "Ctrl+0", "save: hotkey defaulted");
     check(back.password == "newpw" && back.isComplete(),
           "save: new password written");
-    const Json::Value saved = parseJson(readAll(cfgPath));
+    const Json::Value saved = parseJson(Moqi::readFileUtf8(cfgPath));
     check(!saved.isMember("password"), "save: password never in json");
     check(saved.get("min_interval_sec", 0).asInt() == 10,
           "save: json min_interval 10");
@@ -258,15 +250,15 @@ int main() {
   }
 
   // ---- 7. 出站总闸文件语义（只有显式 false 才拦）----
-  writeAll(egressPath, "{\"allow_outbound\": false}\n");
+  Moqi::writeFileUtf8(egressPath, "{\"allow_outbound\": false}\n");
   check(!Moqi::outboundAllowed(root), "egress: explicit false blocks");
-  writeAll(egressPath, "{\"allow_outbound\": true}\n");
+  Moqi::writeFileUtf8(egressPath, "{\"allow_outbound\": true}\n");
   check(Moqi::outboundAllowed(root), "egress: explicit true allows");
-  writeAll(egressPath, "{oops\n");
+  Moqi::writeFileUtf8(egressPath, "{oops\n");
   check(Moqi::outboundAllowed(root), "egress: broken json allows");
-  writeAll(egressPath, "{\"allow_outbound\": \"false\"}\n");
+  Moqi::writeFileUtf8(egressPath, "{\"allow_outbound\": \"false\"}\n");
   check(Moqi::outboundAllowed(root), "egress: non-bool value ignored");
-  writeAll(egressPath, "[]\n");
+  Moqi::writeFileUtf8(egressPath, "[]\n");
   check(Moqi::outboundAllowed(root), "egress: array json allows");
   ::DeleteFileW(egressPath.c_str());
 
@@ -310,11 +302,11 @@ int main() {
     CloudClipboardSync t2(badScheme, root);
     check(!t2.testConnection(&err) && err == Moqi::webDavRejectionMessage(),
           "sync: testConnection rejects non-http scheme");
-    // 总闸关死时 deleteClip 也要拒绝（与其余出站口一致的 2 秒缓存语义）。
-    writeAll(egressPath, "{\"allow_outbound\": false}\n");
+    // 总闸关死时 deleteClip 也要拒绝（与其余出站口一致的 2 秒缓存语义；
+    // egressRoot 非空时每次现读文件，复用同一实例即可）。
+    Moqi::writeFileUtf8(egressPath, "{\"allow_outbound\": false}\n");
     err.clear();
-    CloudClipboardSync blocked(empty, root);
-    check(!blocked.deleteClip(std::string(32, 'a') + ".txt", &err) &&
+    check(!sync.deleteClip(std::string(32, 'a') + ".txt", &err) &&
               err == Moqi::kOutboundBlockedMessage,
           "sync: deleteClip obeys egress master switch");
     ::DeleteFileW(egressPath.c_str());

@@ -36,6 +36,20 @@ std::wstring filePathInRoot(const std::wstring& rootOverride,
   return root.empty() ? L"" : root + suffix;
 }
 
+// 读 JSON 配置文件为对象。文件缺失/坏 JSON/非对象（[]、5、"x"）一律
+// false——jsoncpp 的 get/isMember/operator[] 在数组、标量上会抛
+// Json::LogicError，静态初始化路径上一抛即崩（2026-11-06 实证）。
+// 调用方对 false 按各自的“没配置”默认值处理。
+bool readJsonObject(const std::wstring& path, Json::Value* out) {
+  std::ifstream in(path, std::ios::binary);
+  if (!in) return false;
+  Json::CharReaderBuilder builder;
+  builder["collectComments"] = false;
+  std::string errs;
+  if (!Json::parseFromStream(builder, in, out, &errs)) return false;
+  return out->isObject();
+}
+
 std::string trimStr(const std::string& s) {
   size_t b = 0, e = s.size();
   while (b < e && isspace((unsigned char)s[b])) ++b;
@@ -94,18 +108,12 @@ constexpr ULONGLONG kMinIntervalFloorMs = 10000;  // Go 默认 10s
 
 // 读 network_egress.json：文件缺失/坏 JSON/非对象/键非布尔一律放行——
 // 总闸只有显式 false 才拦（Go network_egress.go 同语义）。
-// 注意非对象 JSON（如 "[]"）：jsoncpp 的 get/isMember/operator[] 在数组、
-// 标量上会抛 Json::LogicError，必须先判 isObject（2026-11-06 实证，
-// 配置文件手改成数组会让 daemon 启动即崩）。
 bool readOutboundAllowedFile(const std::wstring& rootOverride) {
-  std::ifstream in(filePathInRoot(rootOverride, L"\\network_egress.json"),
-                   std::ios::binary);
-  if (!in) return true;
   Json::Value rootJson;
-  Json::CharReaderBuilder builder;
-  std::string errs;
-  if (!Json::parseFromStream(builder, in, &rootJson, &errs)) return true;
-  if (!rootJson.isObject()) return true;
+  if (!readJsonObject(filePathInRoot(rootOverride, L"\\network_egress.json"),
+                      &rootJson)) {
+    return true;
+  }
   if (rootJson.isMember("allow_outbound") &&
       rootJson["allow_outbound"].isBool()) {
     return rootJson["allow_outbound"].asBool();
@@ -169,19 +177,8 @@ CloudClipboardConfig loadCloudClipboardConfig(
   const std::wstring path =
       filePathInRoot(rootOverride, L"\\cloud_clipboard.json");
   if (path.empty()) return cfg;
-  std::ifstream in(path, std::ios::binary);
-  if (!in) return cfg;
-  // 手工解析（daemon 已链 jsoncpp，但这里保持与 RimeCore 相同的轻量模式）
-  Json::CharReaderBuilder builder;
-  builder["collectComments"] = false;
   Json::Value root;
-  std::string errs;
-  if (!Json::parseFromStream(builder, in, &root, &errs)) {
-    return cfg;
-  }
-  // 非对象 JSON（[]/5/"x"）会让后续 get/operator[] 抛 Json::LogicError，
-  // 静态初始化路径上一抛即崩——按“没配置”处理。
-  if (!root.isObject()) {
+  if (!readJsonObject(path, &root)) {
     return cfg;
   }
   cfg.enabled = root.get("enabled", false).asBool();
@@ -213,15 +210,8 @@ std::string loadCloudClipboardHotkey(const std::wstring& rootOverride) {
   const std::wstring path =
       filePathInRoot(rootOverride, L"\\cloud_clipboard.json");
   if (path.empty()) return "Ctrl+0";
-  std::ifstream in(path, std::ios::binary);
-  if (!in) return "Ctrl+0";
   Json::Value root;
-  Json::CharReaderBuilder builder;
-  std::string errs;
-  if (!Json::parseFromStream(builder, in, &root, &errs)) return "Ctrl+0";
-  // 同 loadCloudClipboardConfig：非对象 JSON 按“没配置”处理，不进
-  // operator[]（会抛）。
-  if (!root.isObject()) return "Ctrl+0";
+  if (!readJsonObject(path, &root)) return "Ctrl+0";
   const Json::Value& hk = root["list_hotkey"];
   const std::string value = hk.isString() ? trimStr(hk.asString()) : "";
   return value.empty() ? "Ctrl+0" : value;

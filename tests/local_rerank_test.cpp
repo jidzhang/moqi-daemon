@@ -72,10 +72,6 @@ int main() {
     check(!cc.activeTail(0, &tail), "0s window expires immediately");
   }
 
-  if (g_failed == 0) {
-    std::printf("%d passed, 0 failed\n", g_pass);
-    return 0;
-  }
-  std::printf("%d FAILED\n", g_failed);
-  return 1;
+  std::printf("\n%d passed, %d failed\n", g_pass, g_failed);
+  return g_failed == 0 ? 0 : 1;
 }
