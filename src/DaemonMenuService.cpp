@@ -14,6 +14,11 @@
 #include "DaemonMenuCore.h"
 #include "DaemonMenuService.h"
 
+// 实现在 main.cpp（同 DaemonEngine/PipeServe 的 extern 约定）。
+namespace Moqi {
+void daemonLogExtern(const std::wstring& msg);
+}
+
 namespace Moqi {
 namespace {
 
@@ -596,9 +601,9 @@ Json::Value DaemonMenuService::buildActivatePayload(DaemonEngine& engine) {
   bool full = false;
   engine.uiModeState(&ascii, &full);
   // 图标目录：Go 用 <moqi-ime>\input_methods\rime\icons；安装布局另有
-  // <moqi-ime>\icons 与 data\icons 两种历史位置。按存在性依次尝试，
-  // 全不存在时回退 Go 路径（绝不发一个不存在的绝对路径——2026-11-03
-  // 用户实报"中英切换小图标没有显示出来"，根因=这里取的是 data\icons）。
+  // <moqi-ime>\icons 与 data\icons 两种历史位置。按"目录里真的有图标文件"
+  // 依次尝试——2026-11-03 用户实报"中英切换小图标没有显示出来"，根因=这里
+  // 取到了空目录 data\icons 并把不存在的路径发给了 DLL（LoadImage 失败→空按钮）。
   std::wstring iconDir;
   if (!rimeDataDir_.empty()) {
     std::wstring rimeRoot = rimeDataDir_;
@@ -607,13 +612,24 @@ Json::Value DaemonMenuService::buildActivatePayload(DaemonEngine& engine) {
     const std::wstring candidates[] = {rimeDataDir_ + L"\\icons",
                                        rimeRoot + L"\\icons",
                                        installRoot_ + L"\\moqi-ime\\icons"};
+    auto hasIcons = [](const std::wstring& dir) {
+      return ::GetFileAttributesW((dir + L"\\eng.ico").c_str()) !=
+                 INVALID_FILE_ATTRIBUTES &&
+             ::GetFileAttributesW((dir + L"\\chi_half_capsoff.ico").c_str()) !=
+                 INVALID_FILE_ATTRIBUTES;
+    };
     for (const auto& candidate : candidates) {
-      if (::GetFileAttributesW(candidate.c_str()) != INVALID_FILE_ATTRIBUTES) {
+      if (hasIcons(candidate)) {
         iconDir = candidate;
         break;
       }
     }
-    if (iconDir.empty()) iconDir = rimeRoot + L"\\icons";
+    if (iconDir.empty()) {
+      // 一个能用的都没有：不发图标字段（按钮退化为纯文字），并留痕。
+      daemonLogExtern(L"[activate] no usable icon dir; candidates=" +
+                      candidates[0] + L" | " + candidates[1] + L" | " +
+                      candidates[2]);
+    }
   }
   auto iconPath = [&iconDir](const wchar_t* name) {
     return wsToUtf8(iconDir + L"\\" + name);
@@ -628,7 +644,9 @@ Json::Value DaemonMenuService::buildActivatePayload(DaemonEngine& engine) {
                        const char* type) {
     Json::Value b(Json::objectValue);
     b["id"] = id;
-    b["icon"] = iconPath(icon);
+    if (!iconDir.empty()) {
+      b["icon"] = iconPath(icon); // 解析不到图标目录时整字段缺席=保持纯文字
+    }
     b["text"] = text;
     b["tooltip"] = tooltip;
     b["commandId"] = commandId;

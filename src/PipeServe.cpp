@@ -157,6 +157,13 @@ DWORD WINAPI clientThread(LPVOID self) {
       break; // 客户端断开
     }
     frames.append(buf, got);
+    if (frames.overflowed()) {
+      // 长度前缀损坏/超限：帧序已失步，继续读只会无限积累垃圾。断开这个
+      // 客户端（TSF 侧会自动重连，语义=新连接从干净状态开始）。
+      daemonLogExtern(L"[serve] frame overflow; dropping client " +
+                      std::wstring(clientId.begin(), clientId.end()));
+      break;
+    }
     std::string payload;
     while (frames.nextFrame(payload)) {
       try {

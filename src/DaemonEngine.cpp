@@ -6,6 +6,7 @@
 
 #include "DaemonCloudConfig.h"
 #include "DaemonWebDAV.h"
+#include "DigitPassthrough.h"
 
 #include <atomic>
 #include <algorithm>
@@ -576,6 +577,121 @@ bool DaemonEngine::readInputModes(bool* asciiMode, bool* fullShape) {
   return true;
 }
 
+// 数字/句点原生直通（bug#20 结构性修法）。返回 true = 已作答，调用方直接
+// return。规则：
+//   * 只在 filterKeyDown 阶段判（本函数由 filterKeyDown 调用），onKeyDown
+//     靠 nativeDigitPassthroughPending_ 复用同一结论，两阶段必须一致。
+//   * 组字中一律不接管：数字是选候选、句点是标点顶屏。
+//   * 带 Ctrl/Alt/Shift 的组合键不接管。
+//   * T9 类方案（alphabet 含数字）不接管：那里数字是输入。
+//   * 数字键（0-9）无组字时直通；句点在"上一键是直通数字"时直通。
+bool DaemonEngine::tryNativeDigitPassthrough(const KeyEventData& e,
+                                             Json::Value& resp) {
+  const bool isDigit = e.keyCode >= '0' && e.keyCode <= '9';
+  const bool isPeriod =
+      e.keyCode == VK_OEM_PERIOD || e.keyCode == VK_DECIMAL;
+  if (!isDigit && !isPeriod) {
+    lastKeyWasNativeDigit_ = false;
+    // 其它键进了 filter 阶段：上一个直通键的 onKeyDown 不会再来了，
+    // 清掉 pending，防止滞留标记误放行后续组字中的数字/句点。
+    nativeDigitPassthroughPending_ = false;
+    return false;
+  }
+  const BYTE* st = e.keyStates;
+  const bool hasModifier =
+      st != nullptr && (((st[VK_CONTROL] & 0x80) != 0) ||
+                        ((st[VK_MENU] & 0x80) != 0) ||
+                        ((st[VK_SHIFT] & 0x80) != 0));
+  // 组字中：数字选候选、句点顶屏标点，全部交引擎。keyComposing_ 不能用——
+  // 它是 processKey 在处理"上一键"之前采的样，落后一拍：空格刚上屏、组字
+  // 已清时它仍是 true，紧跟的数字会被误判成组字态→走 IME 代插→Word 丢
+  // 句点的场景在"先打中文再起列表"时复活（2026-11-05 晚自查发现）。这里
+  // 现查引擎状态。数字/句点不是热路径，多一次查询可接受。
+  const bool overlayActive = overlayCustomCount_ > 0 ||
+                             !overlaySuperText_.empty() || aiState_.active ||
+                             cloudClip_.active;
+  if (hasModifier || overlayActive || schemaUsesDigitInput()) {
+    lastKeyWasNativeDigit_ = false;
+    return false;
+  }
+  {
+    bool engineOk = false;
+    const EngineState state = currentState(&engineOk);
+    if (!engineOk || !state.composition.empty() || !state.candidates.empty()) {
+      lastKeyWasNativeDigit_ = false;
+      return false;
+    }
+  }
+  if (isDigit) {
+    lastKeyWasNativeDigit_ = true;
+    nativeDigitPassthroughPending_ = true;
+    lastKeyDownCode_ = static_cast<int>(e.keyCode);
+    lastKeySkip_ = 0;
+    lastKeyDownRet_ = false;
+    lastKeyUpCode_ = 0;
+    daemonLogDebugExtern(L"[native-digit] passthrough vk=" +
+                         to_wstring(e.keyCode));
+    resp["returnValue"] = 0;
+    return true;
+  }
+  // 句点：只有紧跟原生直通数字时才直通，其它情况走 punctuator。
+  const bool followDigit = lastKeyWasNativeDigit_;
+  lastKeyWasNativeDigit_ = false;
+  if (!followDigit) {
+    return false;
+  }
+  nativeDigitPassthroughPending_ = true;
+  lastKeyDownCode_ = static_cast<int>(e.keyCode);
+  lastKeySkip_ = 0;
+  lastKeyDownRet_ = false;
+  lastKeyUpCode_ = 0;
+  daemonLogDebugExtern(L"[native-digit] period passthrough vk=" +
+                       to_wstring(e.keyCode));
+  resp["returnValue"] = 0;
+  return true;
+}
+
+// 当前方案的数字是否属于输入（T9 九宫格）：与 moqi_plain_number.lua 同口径
+// ——方案 id 含 t9，或 speller/alphabet 里出现数字。结果缓存一次（方案切换
+// 会重置，见 ensureSession）。纯判定逻辑抽到 DigitPassthrough.h（可单测）。
+bool DaemonEngine::schemaUsesDigitInput() {
+  if (schemaDigitChecked_) {
+    return schemaUsesDigitInput_;
+  }
+  schemaDigitChecked_ = true;
+  schemaUsesDigitInput_ = false;
+  RimeRuntime& runtime = RimeRuntime::instance();
+  if (sessionId_ == 0 || runtime.rimeGetCurrentSchema == nullptr) {
+    return schemaUsesDigitInput_;
+  }
+  char schemaId[256] = {0};
+  if (!runtime.rimeGetCurrentSchema(sessionId_, schemaId, sizeof(schemaId))) {
+    return schemaUsesDigitInput_;
+  }
+  if (Moqi::schemaIdLooksT9(schemaId)) {
+    schemaUsesDigitInput_ = true;
+    return schemaUsesDigitInput_;
+  }
+  // 方案文件在共享数据目录（<rime>\data）与用户目录都可能存在；读 schema
+  // 原文找 speller/alphabet 行（T9 方案把它写成含数字的字符集）。
+  const std::wstring shared = utf8ToWide(runtime.sharedDataDirUtf8().c_str());
+  const std::wstring userRoot = moqiAppDataDir();
+  const std::wstring fileName = utf8ToWide(schemaId) + L".schema.yaml";
+  const std::wstring candidates[] = {userRoot + L"\\" + fileName,
+                                     shared + L"\\" + fileName};
+  for (const auto& path : candidates) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) continue;
+    std::string text((std::istreambuf_iterator<char>(in)),
+                     std::istreambuf_iterator<char>());
+    if (Moqi::schemaYamlUsesDigitAlphabet(text)) {
+      schemaUsesDigitInput_ = true;
+    }
+    break; // 第一个存在的方案文件即权威
+  }
+  return schemaUsesDigitInput_;
+}
+
 // Port of shouldPassThroughModifierOnKey().
 bool DaemonEngine::shouldPassThroughModifierOnKey(const KeyEventData& e,
                                                  bool filterRet) {
@@ -591,7 +707,6 @@ bool DaemonEngine::shouldPassThroughModifierOnKey(const KeyEventData& e,
   const BYTE* states = e.keyStates;
   return (states[vkControl] & 0x80) != 0 || (states[vkMenu] & 0x80) != 0;
 }
-
 // Port of updateLangStatus(): refresh mode button icons when the engine
 // flipped ascii/full-shape (Shift toggle, schema switches).
 // 命令路径包装：读当前模式并按需附 changeButton（开关类 ON_COMMAND 用）。
@@ -678,6 +793,11 @@ void DaemonEngine::buildResponse(const EngineState& state, bool allowCommit,
   const RerankConfig& rerankCfg = RerankData::instance().config();
   if (allowCommit && !state.commit.empty()) {
     resp["commitString"] = state.commit;
+    // 数字直通标记（bug#20）：单字符 0-9 置位，其他提交清零；供
+    // filterKeyDown 的句点直通判定（Word 2016 自动编号窗口期丢代插）。
+    lastCommitSingleDigit_ = state.commit.size() == 1 &&
+                             state.commit[0] >= '0' &&
+                             state.commit[0] <= '9';
     userDictDirty_ = true; // 有提交=主 userdb 有新学习，反激活时备份快照
     // recordTypoMemory：raw 优先取当前跟踪值，回退提交按键上的快照。
     string raw =
@@ -708,6 +828,9 @@ void DaemonEngine::buildResponse(const EngineState& state, bool allowCommit,
     resp["showCandidates"] = false;
     return;
   }
+  // 组字出现即清数字直通标记：组字中的句点必须交回引擎（标点顶屏/取字），
+  // 不走应用原生插入。
+  lastCommitSingleDigit_ = false;
   resp["compositionString"] = state.composition;
   const int caret =
       compositionCaretRuneIndex(state.composition, state.cursorPos);
@@ -1011,8 +1134,52 @@ bool DaemonEngine::filterKeyDown(const KeyEventData& e, Json::Value& resp,
   if (handleSecondSelectionFilterDown(e, resp)) {
     return true;
   }
+  // 数字/句点原生直通（bug#20 结构性修法，2026-11-05）：无组字、无修饰键、
+  // 非 T9 类方案时，数字键与"紧跟上一次直通数字"的句点键不进引擎，直接
+  // returnValue=0 交应用原生插入——与微软/谷歌同一条路。IME 代插走
+  // ITfInsertAtSelection 编辑会话，Word 自动编号/格式转换窗口期会把它静默
+  // 丢掉（真机实测快打 "1. 2. 3." 只剩 ". . "）；应用原生插入没有这个问题。
+  if (tryNativeDigitPassthrough(e, resp)) {
+    return true;
+  }
   // Same-key dedup (TSF duplicate events), with the bare-Shift exemption:
   // a lost keyup must never break the Shift toggle.
+  // 数字后句点直通（bug#20）：无修饰键、非组字、引擎刚提交单个数字时，
+  // 句点不进引擎（避免 rime 代插 "." 被 Word 自动编号窗口期丢弃），直接
+  // 放行给应用原生插入；onKeyDown 阶段对同一键同样回"未吃"。
+  {
+    const bool isPeriodKey = e.keyCode == VK_OEM_PERIOD ||
+                             e.keyCode == VK_DECIMAL;
+    const BYTE* st = e.keyStates;
+    const bool hasModifier =
+        st != nullptr && (((st[VK_CONTROL] & 0x80) != 0) ||
+                          ((st[VK_MENU] & 0x80) != 0) ||
+                          ((st[VK_SHIFT] & 0x80) != 0));
+    // keyComposing_ 落后一拍（processKey 处理上一键前采样）：引擎刚提交单个
+    // 数字后它仍为 true，这里必须现查，否则兜底直通永远不触发。
+    bool composingNow = true;
+    if (isPeriodKey && lastCommitSingleDigit_ && !hasModifier) {
+      bool engineOk = false;
+      const EngineState state = currentState(&engineOk);
+      composingNow = !engineOk || !state.composition.empty() ||
+                     !state.candidates.empty();
+    }
+    if (isPeriodKey && lastCommitSingleDigit_ && !hasModifier &&
+        !composingNow) {
+      lastCommitSingleDigit_ = false;
+      periodPassthroughPending_ = true;
+      lastKeyDownCode_ = static_cast<int>(e.keyCode);
+      lastKeySkip_ = 0;
+      lastKeyDownRet_ = false;
+      lastKeyUpCode_ = 0;
+      daemonLogDebugExtern(
+          L"[digit-period] passthrough (engine-side) vk=" +
+          to_wstring(e.keyCode));
+      resp["returnValue"] = 0;
+      return true;
+    }
+    periodPassthroughPending_ = false;
+  }
   if (!isBareShiftKeyCode(e.keyCode) &&
       static_cast<int>(e.keyCode) == lastKeyDownCode_) {
     ++lastKeySkip_;
@@ -1040,6 +1207,31 @@ bool DaemonEngine::filterKeyDown(const KeyEventData& e, Json::Value& resp,
 bool DaemonEngine::onKeyDown(const KeyEventData& e, Json::Value& resp) {
   RimeRuntime& runtime = RimeRuntime::instance();
   std::lock_guard<std::recursive_mutex> lock(runtime.mutex());
+
+  // 数字/句点原生直通的下半程（bug#20）：filterKeyDown 已回"未吃"，
+  // 这里对同一键也回"未吃"，避免应用原生插入后又被吃回。
+  if (nativeDigitPassthroughPending_) {
+    nativeDigitPassthroughPending_ = false;
+    const bool isDigit = e.keyCode >= '0' && e.keyCode <= '9';
+    const bool isPeriod =
+        e.keyCode == VK_OEM_PERIOD || e.keyCode == VK_DECIMAL;
+    if (isDigit || isPeriod) {
+      lastKeyDownRet_ = false;
+      resp["returnValue"] = 0;
+      return true;
+    }
+  }
+
+  // 数字后句点直通的下半程（bug#20）：filterKeyDown 已放行给应用，
+  // 这里对同一键也回"未吃"，避免应用原生插入后又被吃回。
+  if (periodPassthroughPending_) {
+    periodPassthroughPending_ = false;
+    if (e.keyCode == VK_OEM_PERIOD || e.keyCode == VK_DECIMAL) {
+      lastKeyDownRet_ = false;
+      resp["returnValue"] = 0;
+      return true;
+    }
+  }
 
   // 置顶短语/超级简拼的提交（filterKeyDown 已消费按键）。
   if (!overlayCommitText_.empty()) {
@@ -1435,6 +1627,10 @@ void DaemonEngine::onActivate() {
   lastKeyUpCode_ = 0;
   keyComposing_ = false;
   secondSelectConsumeKeyUpCode_ = 0;
+  // 方案可能已换：数字直通方案判定与"上一键是数字"标记都要重置。
+  schemaDigitChecked_ = false;
+  lastKeyWasNativeDigit_ = false;
+  nativeDigitPassthroughPending_ = false;
   rawInputTracked_.clear();
   rawInputAtCommit_.clear();
   displayPerm_.clear();

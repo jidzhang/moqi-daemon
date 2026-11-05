@@ -72,6 +72,20 @@ target_compile_definitions(daemon_menu_test PRIVATE
 target_link_libraries(daemon_menu_test jsoncpp_static)
 add_test(NAME daemon_menu_test COMMAND daemon_menu_test)
 
+# 数字/句点原生直通（bug#20）纯逻辑回归：T9 方案识别 + alphabet 数字识别。
+# 判错后果：T9 打不了字 / Word 丢句点复活。头文件即被测物，无需链接库。
+add_executable(digit_passthrough_test tests/digit_passthrough_test.cpp)
+target_include_directories(digit_passthrough_test PRIVATE src)
+add_test(NAME digit_passthrough_test COMMAND digit_passthrough_test)
+
+# 管道帧协议回归（历史事故：>4096B 帧被静默丢块）+ 健壮性边界
+#（损坏长度前缀不得让接收方无限等待/无限分配）。
+add_executable(proto_framing_test tests/proto_framing_test.cpp)
+target_include_directories(proto_framing_test PRIVATE
+  "${MOQI_WIN_DIR}/proto" "${MOQI_WIN_DIR}/jsoncpp/include")
+target_link_libraries(proto_framing_test jsoncpp_static)
+add_test(NAME proto_framing_test COMMAND proto_framing_test)
+
 # 维护命令回归：皮肤 YAML/JSON 导入解析与落盘（rootOverride 重定向）。
 add_executable(daemon_maintenance_test
   tests/daemon_maintenance_test.cpp

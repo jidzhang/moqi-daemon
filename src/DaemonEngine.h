@@ -116,6 +116,9 @@ private:
   void buildResponse(const EngineState& state, bool allowCommit,
                      Json::Value& resp);
   bool shouldPassThroughModifierOnKey(const KeyEventData& e, bool filterRet);
+  // 数字/句点原生直通（bug#20）：见 .cpp 注释。返回 true = 已作答。
+  bool tryNativeDigitPassthrough(const KeyEventData& e, Json::Value& resp);
+  bool schemaUsesDigitInput();
   void appendLangStatusChange(Json::Value& resp, bool ascii, bool full);
   void updateTrackedRawInput(const KeyEventData& e, UINT keyCode, UINT charCode, bool backendRet);
   void snapshotRawInputForCommit();
@@ -136,6 +139,24 @@ private:
   bool lastKeyDownRet_ = false;
   bool lastKeyUpRet_ = false;
   bool keyComposing_ = false;
+  // Word 2016 丢句点修复（bug#20）：引擎刚直通提交单个数字时，紧跟的
+  // 句点键不进引擎（rime 会代插 "."，Word 自动编号窗口期会丢掉这次代插），
+  // 直接回 returnValue=0 让应用原生插入。DLL 侧有时序盲区（其标记要等
+  // 提交落屏才置位，Word 恰恰压着不落），daemon 在引擎侧精确判定。
+  bool lastCommitSingleDigit_ = false;
+  bool periodPassthroughPending_ = false;
+  // 数字/句点原生直通（bug#20 结构性修法，2026-11-05）：无组字时数字键
+  // 干脆不进引擎，与微软/谷歌一致由应用原生插入。IME 代插走
+  // ITfInsertAtSelection 编辑会话，Word 的自动编号/格式转换窗口期会静默
+  // 丢掉这种插入（实测快打 "1. 2. 3." 只剩 ". . "）；原生插入无此问题。
+  // 句点在"上一键是原生直通数字"时同样直通，"1." 全程不碰 IME。
+  bool lastKeyWasNativeDigit_ = false;
+  // filterKeyDown 已对某个数字/句点回了"未吃"：onKeyDown 必须对同一键回
+  // 同样的结论（两阶段不一致会被宿主的 TSF 路径吃回，bug#20 首轮教训）。
+  bool nativeDigitPassthroughPending_ = false;
+  // 数字本身就是输入的方案（T9 九宫格）：整套直通关闭，数字照旧进引擎。
+  bool schemaDigitChecked_ = false;
+  bool schemaUsesDigitInput_ = false;
   int secondSelectConsumeKeyUpCode_ = 0;
   std::string selectKeysCache_;
   bool asciiKnown_ = false;

@@ -133,7 +133,7 @@ Json::Value buildMenu(const MenuState& state) {
   items.append(makeItem(18, "打开置顶短语"));
   items.append(makeItem(19, "打开超级简拼"));
   items.append(makeItem(ID_UPDATE_CONFIG, "在线更新配置"));
-  items.append(makeItem(ID_DEPLOY, "刷新配置(&R)"));
+  items.append(makeItem(ID_DEPLOY, "重新加载配置(&R)"));
   items.append(makeSeparator());
 
   // 5) 输入状态共享
@@ -303,7 +303,7 @@ Json::Value buildMenu(const MenuState& state) {
   }
 
   items.append(makeSeparator());
-  items.append(makeItem(ID_HELP_DOCS, "帮助文档(&H)"));
+  items.append(makeItem(ID_HELP_DOCS, "帮助文档"));
   items.append(makeItem(ID_DISCUSSIONS, "参与讨论"));
   return items;
 }
