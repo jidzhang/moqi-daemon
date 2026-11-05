@@ -304,7 +304,7 @@ Json::Value buildMenu(const MenuState& state) {
 
   items.append(makeSeparator());
   items.append(makeItem(ID_HELP_DOCS, "帮助文档(&H)"));
-  items.append(makeItem(ID_DISCUSSIONS, "我的地址"));
+  items.append(makeItem(ID_DISCUSSIONS, "参与讨论(&J)"));
   return items;
 }
 

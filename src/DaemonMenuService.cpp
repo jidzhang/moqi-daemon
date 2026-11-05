@@ -828,7 +828,7 @@ void DaemonMenuService::openCommandTarget(int id) {
       break;
     case Menu::ID_DISCUSSIONS:
       shellOpen(
-          L"https://github.com/gaboolic/moqi-im-windows/discussions", true);
+          L"https://gitcode.com/jidzhang/moqi-im-windows/discussions", true);
       break;
     case Menu::ID_USER_DIR: {
       Json::Value ssc = readJsonFile(root + L"\\scheme_set.json");
