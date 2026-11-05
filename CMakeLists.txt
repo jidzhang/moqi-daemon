@@ -94,6 +94,16 @@ target_include_directories(local_behavior_patch_test PRIVATE
 target_link_libraries(local_behavior_patch_test jsoncpp_static)
 add_test(NAME local_behavior_patch_test COMMAND local_behavior_patch_test)
 
+# 重排层纯逻辑回归（UTF-8 工具 + 短窗连贯）。直接影响候选排序正确性。
+# RimeCore.cpp 提供 utf8ToWide/fileMtime（LocalRerank.cpp 的传递依赖）。
+add_executable(local_rerank_test tests/local_rerank_test.cpp
+  "${TS_DIR}/LocalRerank.cpp" "${TS_DIR}/LocalRerank.h"
+  "${TS_DIR}/RimeCore.cpp" "${TS_DIR}/RimeCore.h")
+target_include_directories(local_rerank_test PRIVATE
+  "${TS_DIR}" "${MOQI_WIN_DIR}" "${MOQI_WIN_DIR}/jsoncpp/include")
+target_link_libraries(local_rerank_test jsoncpp_static)
+add_test(NAME local_rerank_test COMMAND local_rerank_test)
+
 # 维护命令回归：皮肤 YAML/JSON 导入解析与落盘（rootOverride 重定向）。
 add_executable(daemon_maintenance_test
   tests/daemon_maintenance_test.cpp
