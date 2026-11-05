@@ -29,22 +29,27 @@ struct CloudClipboardConfig {
 };
 
 // 读 %APPDATA%\Moqi\cloud_clipboard.json + 解密 cloud_clipboard.pw。
-CloudClipboardConfig loadCloudClipboardConfig();
+// rootOverride 仅供单测把读写重定向到临时目录（同 DaemonMaintenance 先例）；
+// 空串 = 真实 %APPDATA%\Moqi，生产调用点全部走默认值。
+CloudClipboardConfig loadCloudClipboardConfig(
+    const std::wstring& rootOverride = L"");
 // 只读热键字段（按键路径每 2 秒缓存一次，避免每次 DPAPI 解密密码）。
-std::string loadCloudClipboardHotkey();
+std::string loadCloudClipboardHotkey(const std::wstring& rootOverride = L"");
 // 保存 json（密码单独走 saveCloudClipboardPassword）。
 // newPassword 非空 → 写入密码文件；keepPassword=true 且新密码空 → 保留旧密码。
 bool saveCloudClipboardConfig(const CloudClipboardConfig& cfg,
                                const std::string& newPassword,
-                               bool keepPassword);
+                               bool keepPassword,
+                               const std::wstring& rootOverride = L"");
 
 // DPAPI 密码（CryptProtectData/CryptUnprotectData，同 Go）。
-std::string readCloudClipboardPassword();
-bool saveCloudClipboardPassword(const std::string& password);
+std::string readCloudClipboardPassword(const std::wstring& rootOverride = L"");
+bool saveCloudClipboardPassword(const std::string& password,
+                                const std::wstring& rootOverride = L"");
 
 // 出站总闸（Go network_egress.go）：%APPDATA%\Moqi\network_egress.json
 // {"allow_outbound": false} 时四个出站口（AI/云剪贴/词库同步/WebDAV）统一拒绝。
-bool outboundAllowed();
+bool outboundAllowed(const std::wstring& rootOverride = L"");
 extern const char kOutboundBlockedMessage[];
 
 // = Go cloudclipboard::Sync（上传引擎）

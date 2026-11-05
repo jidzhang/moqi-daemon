@@ -109,7 +109,20 @@ int main() {
               << std::endl;
     return 0; // 环境未配（如纯单测机）不算失败
   }
+  // 与 main.cpp 的注入一致：数据目录 = {program}\moqi-ime\input_methods\rime。
+  // 此前漏设 backendDir（空串）导致解析成 {program}\input_methods\rime，
+  // 布局不存在 → engine init 失败被当成断言失败。
   g_daemonProgramDir = program;
+  g_daemonBackendDir = L"moqi-ime";
+  const std::wstring dataDir =
+      g_daemonProgramDir + L"\\" + g_daemonBackendDir +
+      L"\\input_methods\\rime\\data";
+  const DWORD attrs = ::GetFileAttributesW(dataDir.c_str());
+  if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+    std::wcout << L"SKIP: engine layout not present: " << dataDir
+               << std::endl;
+    return 0; // 布局不在（如纯单测机）不算失败
+  }
 
   DaemonEngine engine;
   engine.ensureEngine();

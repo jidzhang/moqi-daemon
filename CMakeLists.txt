@@ -18,9 +18,16 @@ add_definitions(/D_UNICODE=1 /DUNICODE=1 /utf-8 /DMOQI_ALLOW_X86_ENGINE)
 set(MOQI_WIN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
 set(TS_DIR "${MOQI_WIN_DIR}/MoqiTextService")
 
-set(JSONCPP_TESTS OFF CACHE BOOL "" FORCE)
+# JSONCPP_WITH_TESTS 才是 jsoncpp 1.9.6 的真选项名（此前误写 JSONCPP_TESTS，
+# 形同没关：自带的 3 个测试被注册进 ctest 但 exe 又不在 ALL 里，跑一次挂一次）。
+set(JSONCPP_WITH_TESTS OFF CACHE BOOL "" FORCE)
 set(JSONCPP_WITH_POST_BUILD_UNITTEST OFF CACHE BOOL "" FORCE)
 add_subdirectory("${MOQI_WIN_DIR}/jsoncpp" jsoncpp EXCLUDE_FROM_ALL)
+
+# add_test 生效前提（此前漏了，ctest 报 No tests were found）。
+# 必须放在 jsoncpp 的 add_subdirectory 之后：放在前面会把 jsoncpp 自带的
+# 测试也注册进来（EXCLUDE_FROM_ALL 没编它们的 exe，ctest 报找不到可执行文件）。
+enable_testing()
 
 add_executable(MoqiDaemon
   src/main.cpp
@@ -72,6 +79,14 @@ target_compile_definitions(daemon_menu_test PRIVATE
 target_link_libraries(daemon_menu_test jsoncpp_static)
 add_test(NAME daemon_menu_test COMMAND daemon_menu_test)
 
+# 命令分发边界回归（与 daemon_menu_test 互补）：模式开关/越界号/主题段
+# 上界/竖排回横排兜底/外观表全命中/自定义颜色切 custom/222 冲突。
+add_executable(daemon_menu_dispatch_test tests/daemon_menu_dispatch_test.cpp
+  src/DaemonMenuCore.cpp)
+target_include_directories(daemon_menu_dispatch_test PRIVATE src)
+target_link_libraries(daemon_menu_dispatch_test jsoncpp_static)
+add_test(NAME daemon_menu_dispatch_test COMMAND daemon_menu_dispatch_test)
+
 # 数字/句点原生直通（bug#20）纯逻辑回归：T9 方案识别 + alphabet 数字识别。
 # 判错后果：T9 打不了字 / Word 丢句点复活。头文件即被测物，无需链接库。
 add_executable(digit_passthrough_test tests/digit_passthrough_test.cpp)
@@ -116,8 +131,25 @@ target_include_directories(daemon_maintenance_test PRIVATE
 target_link_libraries(daemon_maintenance_test jsoncpp_static comdlg32)
 add_test(NAME daemon_maintenance_test COMMAND daemon_maintenance_test)
 
+# 云剪贴板配置层回归：JSON 解析/默认值兜底、DPAPI 密码回环、明文密码
+# 过渡迁移、出站总闸文件语义、同步引擎零网络校验路径。
+# rootOverride 把读写重定向到测试目录，不碰真实 %APPDATA%\Moqi。
+add_executable(cloud_config_test tests/cloud_config_test.cpp
+  src/DaemonCloudConfig.cpp
+  src/DaemonCloudConfig.h
+  src/DaemonWebDAV.cpp
+  src/DaemonWebDAV.h
+  "${TS_DIR}/RimeCore.cpp"
+  "${TS_DIR}/LocalRerank.cpp")
+target_include_directories(cloud_config_test PRIVATE
+  src "${TS_DIR}" "${MOQI_WIN_DIR}" "${MOQI_WIN_DIR}/jsoncpp/include")
+target_link_libraries(cloud_config_test jsoncpp_static crypt32 winhttp advapi32)
+add_test(NAME cloud_config_test COMMAND cloud_config_test)
+
 # 引擎级回归：shima 错字提顶后的显示/提交一致性（需 x86 rime.dll 布局，
-# 环境变量由 ctest 注入；无环境时测试自跳过）。
+# 环境变量由 ctest 注入；布局不在/无环境时测试自跳过）。
+# 布局 = 安装根形态：C:\work\moqi-daemon-full（根下 x86 rime.dll +
+# moqi-ime\input_methods\rime\data；backendDir 由测试自己补成 moqi-ime）。
 add_executable(daemon_engine_desync_test
   tests/daemon_engine_desync_test.cpp
   src/DaemonAI.cpp

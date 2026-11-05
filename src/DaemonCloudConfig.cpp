@@ -27,13 +27,16 @@
 namespace Moqi {
 namespace {
 
-std::wstring cloudConfigPath() {
-  const std::wstring root = moqiAppDataDir();
+// 配置根目录：rootOverride 非空（单测重定向）优先，否则 %APPDATA%\Moqi。
+std::wstring cloudConfigRoot(const std::wstring& rootOverride) {
+  return rootOverride.empty() ? moqiAppDataDir() : rootOverride;
+}
+
+std::wstring cloudConfigPath(const std::wstring& root) {
   return root.empty() ? L"" : root + L"\\cloud_clipboard.json";
 }
 
-std::wstring cloudPasswordPath() {
-  const std::wstring root = moqiAppDataDir();
+std::wstring cloudPasswordPath(const std::wstring& root) {
   return root.empty() ? L"" : root + L"\\cloud_clipboard.pw";
 }
 
@@ -93,6 +96,23 @@ constexpr size_t kPreviewMaxLength = 240;
 constexpr ULONGLONG kRemoteClipClearMs = 300;
 constexpr ULONGLONG kMinIntervalFloorMs = 10000;  // Go 默认 10s
 
+// 读 network_egress.json：文件缺失/坏 JSON/键非布尔一律放行——
+// 总闸只有显式 false 才拦（Go network_egress.go 同语义）。
+bool readOutboundAllowedFile(const std::wstring& root) {
+  const std::wstring path = root + L"\\network_egress.json";
+  std::ifstream in(path, std::ios::binary);
+  if (!in) return true;
+  Json::Value rootJson;
+  Json::CharReaderBuilder builder;
+  std::string errs;
+  if (!Json::parseFromStream(builder, in, &rootJson, &errs)) return true;
+  if (rootJson.isMember("allow_outbound") &&
+      rootJson["allow_outbound"].isBool()) {
+    return rootJson["allow_outbound"].asBool();
+  }
+  return true;
+}
+
 }  // namespace
 
 // ------------------------------------------------------------- 配置 ----
@@ -100,32 +120,26 @@ constexpr ULONGLONG kMinIntervalFloorMs = 10000;  // Go 默认 10s
 const char kOutboundBlockedMessage[] =
     "已按出站总闸设置拒绝网络请求（network_egress.json allow_outbound=false）";
 
-bool outboundAllowed() {
+bool outboundAllowed(const std::wstring& rootOverride) {
+  // 单测重定向路径不进 2 秒缓存：测试要连续摆弄不同文件内容。
+  if (!rootOverride.empty()) return readOutboundAllowedFile(rootOverride);
   static ULONGLONG loadedAt = 0;
   static bool allowed = true;
   const ULONGLONG now = ::GetTickCount64();
   if (loadedAt != 0 && now - loadedAt < 2000) return allowed;
   loadedAt = now;
-  allowed = true;
-  const std::wstring path = moqiAppDataDir() + L"\\network_egress.json";
-  std::ifstream in(path, std::ios::binary);
-  if (!in) return allowed;
-  Json::Value root;
-  Json::CharReaderBuilder builder;
-  std::string errs;
-  if (!Json::parseFromStream(builder, in, &root, &errs)) return true;
-  if (root.isMember("allow_outbound") && root["allow_outbound"].isBool()) {
-    allowed = root["allow_outbound"].asBool();
-  }
+  allowed = readOutboundAllowedFile(moqiAppDataDir());
   return allowed;
 }
 
-std::string readCloudClipboardPassword() {
-  return unprotectData(readFileBin(cloudPasswordPath()));
+std::string readCloudClipboardPassword(const std::wstring& rootOverride) {
+  return unprotectData(
+      readFileBin(cloudPasswordPath(cloudConfigRoot(rootOverride))));
 }
 
-bool saveCloudClipboardPassword(const std::string& password) {
-  const std::wstring path = cloudPasswordPath();
+bool saveCloudClipboardPassword(const std::string& password,
+                                const std::wstring& rootOverride) {
+  const std::wstring path = cloudPasswordPath(cloudConfigRoot(rootOverride));
   if (path.empty()) return false;
   if (password.empty()) {
     ::DeleteFileW(path.c_str());
@@ -134,9 +148,10 @@ bool saveCloudClipboardPassword(const std::string& password) {
   return writeFileBin(path, protectData(password));
 }
 
-CloudClipboardConfig loadCloudClipboardConfig() {
+CloudClipboardConfig loadCloudClipboardConfig(
+    const std::wstring& rootOverride) {
   CloudClipboardConfig cfg;
-  const std::wstring path = cloudConfigPath();
+  const std::wstring path = cloudConfigPath(cloudConfigRoot(rootOverride));
   if (path.empty()) return cfg;
   std::ifstream in(path, std::ios::binary);
   if (!in) return cfg;
@@ -157,20 +172,20 @@ CloudClipboardConfig loadCloudClipboardConfig() {
   if (sec > 0) cfg.minIntervalSec = sec;
   std::string hk = trimStr(root.get("list_hotkey", "").asString());
   if (!hk.empty()) cfg.listHotkey = hk;
-  cfg.password = readCloudClipboardPassword();
+  cfg.password = readCloudClipboardPassword(rootOverride);
   // 过渡入口：JSON 里显式写 password 时转入 DPAPI 文件（Go 时代是对话框
   // 输入；退休 Go 后若不支持，新用户永远配不出密码）。
   const Json::Value& plainPwd = root["password"];
   if (cfg.password.empty() && plainPwd.isString() &&
       !trimStr(plainPwd.asString()).empty()) {
     cfg.password = trimStr(plainPwd.asString());
-    saveCloudClipboardPassword(cfg.password);
+    saveCloudClipboardPassword(cfg.password, rootOverride);
   }
   return cfg;
 }
 
-std::string loadCloudClipboardHotkey() {
-  const std::wstring path = cloudConfigPath();
+std::string loadCloudClipboardHotkey(const std::wstring& rootOverride) {
+  const std::wstring path = cloudConfigPath(cloudConfigRoot(rootOverride));
   if (path.empty()) return "Ctrl+0";
   std::ifstream in(path, std::ios::binary);
   if (!in) return "Ctrl+0";
@@ -185,8 +200,9 @@ std::string loadCloudClipboardHotkey() {
 
 bool saveCloudClipboardConfig(const CloudClipboardConfig& cfg,
                               const std::string& newPassword,
-                              bool keepPassword) {
-  const std::wstring path = cloudConfigPath();
+                              bool keepPassword,
+                              const std::wstring& rootOverride) {
+  const std::wstring path = cloudConfigPath(cloudConfigRoot(rootOverride));
   if (path.empty()) return false;
   Json::Value root(Json::objectValue);
   root["enabled"] = cfg.enabled;
@@ -204,10 +220,10 @@ bool saveCloudClipboardConfig(const CloudClipboardConfig& cfg,
   if (!out.good()) return false;
   // 密码
   if (!newPassword.empty()) {
-    return saveCloudClipboardPassword(newPassword);
+    return saveCloudClipboardPassword(newPassword, rootOverride);
   }
   if (!keepPassword) {
-    return saveCloudClipboardPassword("");
+    return saveCloudClipboardPassword("", rootOverride);
   }
   return true;
 }
