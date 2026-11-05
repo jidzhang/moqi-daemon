@@ -14,8 +14,8 @@ add_definitions(/D_UNICODE=1 /DUNICODE=1 /utf-8 /DMOQI_ALLOW_X86_ENGINE)
 
 # Reuse verified sources from moqi-im-windows (coupling documented in README).
 # Submodule layout (2026-11-05): daemon lives at <moqi-im-windows>/moqi-daemon,
-# so the shared-engine tree is two levels up.
-set(MOQI_WIN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../..")
+# so the shared-engine tree is exactly one level up.
+set(MOQI_WIN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
 set(TS_DIR "${MOQI_WIN_DIR}/MoqiTextService")
 
 set(JSONCPP_TESTS OFF CACHE BOOL "" FORCE)
