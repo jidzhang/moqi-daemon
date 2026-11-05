@@ -132,7 +132,7 @@ Json::Value buildMenu(const MenuState& state) {
   // 3) 置顶短语/简拼/更新/刷新
   items.append(makeItem(18, "打开置顶短语"));
   items.append(makeItem(19, "打开超级简拼"));
-  items.append(makeItem(ID_UPDATE_CONFIG, "更新配置(&P)"));
+  items.append(makeItem(ID_UPDATE_CONFIG, "在线更新配置"));
   items.append(makeItem(ID_DEPLOY, "刷新配置(&R)"));
   items.append(makeSeparator());
 
@@ -304,7 +304,7 @@ Json::Value buildMenu(const MenuState& state) {
 
   items.append(makeSeparator());
   items.append(makeItem(ID_HELP_DOCS, "帮助文档(&H)"));
-  items.append(makeItem(ID_DISCUSSIONS, "参加讨论(&J)"));
+  items.append(makeItem(ID_DISCUSSIONS, "我的地址"));
   return items;
 }
 

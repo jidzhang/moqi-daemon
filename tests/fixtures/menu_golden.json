@@ -170,7 +170,7 @@
   },
   {
     "id": 17,
-    "text": "更新配置(&P)",
+    "text": "在线更新配置",
     "checked": false,
     "enabled": true,
     "submenu": [],
@@ -1108,7 +1108,7 @@
   },
   {
     "id": 22,
-    "text": "参加讨论(&J)",
+    "text": "我的地址",
     "checked": false,
     "enabled": true,
     "submenu": [],
