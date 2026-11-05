@@ -447,7 +447,8 @@ bool DaemonAI::load() {
   } else if (!readJsonFile(wsToUtf8(AiConfigBundledPathW()), &root)) {
     return false;
   }
-  const Json::Value &api = root["api"];
+  // root 手改成非对象（[]/标量）时裸 [] 会抛——安全成员访问。
+  const Json::Value &api = jsonMemberOf(root, "api");
   if (!api.isObject()) return false;
   // 哨兵：只有键名恰好是 base_url 才启用（内置的"AI 默认关"机制）。
   const Json::Value &baseVal = api["base_url"];
@@ -459,7 +460,7 @@ bool DaemonAI::load() {
   cfg_.model = trimCopy(jsonString(api, "model"));
   if (cfg_.apiKey.empty() || cfg_.model.empty()) return false;
 
-  const Json::Value &actions = root["actions"];
+  const Json::Value &actions = jsonMemberOf(root, "actions");
   if (actions.isArray()) {
     for (const auto &item : actions) {
       if (!item.isObject()) continue;

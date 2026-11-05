@@ -11,11 +11,16 @@
 
 using Moqi::buildLocalBehaviorPatchBody;
 
+static int g_pass = 0;
 static int g_failed = 0;
 
 static void check(bool ok, const char* what) {
   std::printf("%s %s\n", ok ? "PASS" : "FAIL", what);
-  if (!ok) ++g_failed;
+  if (ok) {
+    ++g_pass;
+  } else {
+    ++g_failed;
+  }
 }
 
 static bool contains(const std::string& hay, const char* needle) {
@@ -147,10 +152,19 @@ int main() {
           "out-of-range penalty falls back to -4");
   }
 
-  if (g_failed == 0) {
-    std::printf("24 passed, 0 failed\n");
-    return 0;
+  // --- 容器被手改成数组/标量：按全默认走，绝不抛 ---
+  // （jsoncpp 的 operator[]/get 在非对象容器上抛 Json::LogicError；这段
+  // 跑在 TSF DLL 里，手改配置不能崩宿主进程。）
+  {
+    const Json::Value arr(Json::arrayValue);
+    const Json::Value num(5);
+    const std::string bodyA = buildLocalBehaviorPatchBody(arr, num, "");
+    check(contains(bodyA, "disable_user_dict_for_patterns"),
+          "array cfg/contextual -> default body, no throw");
+    check(!contains(bodyA, "patterns/punct: null"),
+          "array cfg -> all triggers default off");
   }
-  std::printf("%d FAILED\n", g_failed);
-  return 1;
+
+  std::printf("\n%d passed, %d failed\n", g_pass, g_failed);
+  return g_failed == 0 ? 0 : 1;
 }

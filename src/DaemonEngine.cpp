@@ -1599,27 +1599,32 @@ void DaemonEngine::onActivate() {
     }
   }
   candidateCount_ = 7;
-  if (cfg["candidate_count"].isInt()) {
-    const int n = cfg["candidate_count"].asInt();
-    if (n == 3 || n == 5 || n == 7 || n == 9) candidateCount_ = n;
+  // 外观/共享状态取值走安全访问器：appearance_config.json 手改坏
+  // （数组/键类型不符）曾可让 onActivate 抛异常。
+  {
+    const Json::Value& cc = jsonMemberOf(cfg, "candidate_count");
+    if (cc.isInt()) {
+      const int n = cc.asInt();
+      if (n == 3 || n == 5 || n == 7 || n == 9) candidateCount_ = n;
+    }
   }
-  semicolonSelectSecond_ = cfg.get("semicolon_select_second", false).asBool();
+  semicolonSelectSecond_ = jsonBoolOf(cfg, "semicolon_select_second");
 
   std::lock_guard<std::recursive_mutex> lock(runtime.mutex());
   sessionId_ = runtime.rimeCreateSession();
   if (sessionId_ == 0) {
     return;
   }
-  if (cfg.get("input_state_shared", false).asBool()) {
-    const Json::Value& shared = cfg["shared_options"];
+  if (jsonBoolOf(cfg, "input_state_shared")) {
+    const Json::Value& shared = jsonMemberOf(cfg, "shared_options");
     if (shared.isObject()) {
       if (shared.isMember("ascii_mode")) {
         runtime.rimeSetOption(sessionId_, "ascii_mode",
-                              shared.get("ascii_mode", false).asBool() ? 1 : 0);
+                              jsonBoolOf(shared, "ascii_mode") ? 1 : 0);
       }
       if (shared.isMember("full_shape")) {
         runtime.rimeSetOption(sessionId_, "full_shape",
-                              shared.get("full_shape", false).asBool() ? 1 : 0);
+                              jsonBoolOf(shared, "full_shape") ? 1 : 0);
       }
     }
   }

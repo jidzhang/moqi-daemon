@@ -162,6 +162,18 @@ int main() {
   Moqi::writeFileUtf8(cfgPath, "5\n");
   check(Moqi::loadCloudClipboardConfig(root).baseUrl.empty(),
         "guard: scalar json -> defaults");
+  // 键存在但类型不符（手改最常见：数字带引号/值写成数组）——
+  // asBool/asInt/asString 对错型值同样抛，必须回默认。
+  Moqi::writeFileUtf8(
+      cfgPath,
+      "{\"enabled\": \"yes\", \"min_interval_sec\": \"10\", "
+      "\"base_url\": [], \"username\": 123}\n");
+  {
+    const CloudClipboardConfig cfg = Moqi::loadCloudClipboardConfig(root);
+    check(!cfg.enabled && cfg.minIntervalSec == 10 && cfg.baseUrl.empty() &&
+              cfg.username.empty(),
+          "guard: wrong-typed values -> defaults");
+  }
 
   // ---- 4. DPAPI 密码回环 ----
   check(Moqi::saveCloudClipboardPassword("s3cret-pw", root), "pw: save ok");

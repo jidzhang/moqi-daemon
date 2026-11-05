@@ -181,14 +181,15 @@ CloudClipboardConfig loadCloudClipboardConfig(
   if (!readJsonObject(path, &root)) {
     return cfg;
   }
-  cfg.enabled = root.get("enabled", false).asBool();
-  cfg.baseUrl = trimStr(root.get("base_url", "").asString());
-  cfg.username = trimStr(root.get("username", "").asString());
-  cfg.settingsRoot = normalizeWebDavDir(
-      root.get("settings_root", "").asString());
-  int sec = root.get("min_interval_sec", 0).asInt();
+  // 取值一律走安全访问器（RimeCore.h）：键类型不符（如 "min_interval_sec":
+  // "10"）时 asInt/asBool 会抛 Json::LogicError——手改配置不能崩 daemon。
+  cfg.enabled = jsonBoolOf(root, "enabled");
+  cfg.baseUrl = trimStr(jsonStringOf(root, "base_url"));
+  cfg.username = trimStr(jsonStringOf(root, "username"));
+  cfg.settingsRoot = normalizeWebDavDir(jsonStringOf(root, "settings_root"));
+  int sec = jsonIntOf(root, "min_interval_sec", 0);
   if (sec > 0) cfg.minIntervalSec = sec;
-  std::string hk = trimStr(root.get("list_hotkey", "").asString());
+  std::string hk = trimStr(jsonStringOf(root, "list_hotkey"));
   if (!hk.empty()) cfg.listHotkey = hk;
   cfg.password = readCloudClipboardPassword(rootOverride);
   // 过渡入口：JSON 里显式写 password 时转入 DPAPI 文件（Go 时代是对话框

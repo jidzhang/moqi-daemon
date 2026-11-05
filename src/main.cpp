@@ -230,7 +230,8 @@ std::string currentSchemeSetNameForSync() {
     std::string errs;
     Json::parseFromStream(builder, in, &cfg, &errs);
   }
-  const std::string name = cfg.get("current", "Rime").asString();
+  // 安全取值：scheme_set.json 手改成数组/标量时裸 get 会抛。
+  const std::string name = jsonStringOf(cfg, "current", "Rime");
   return name.empty() ? "Rime" : name;
 }
 
@@ -257,7 +258,7 @@ void executeLauncherCommands(int cmdId) {
           Json::parseFromStream(rb, in, &cfg, &errs);
         }
         if (!cfg.isObject()) cfg = Json::Value(Json::objectValue);
-        std::string level = cfg.get("logLevel", "error").asString();
+        std::string level = jsonStringOf(cfg, "logLevel", "error");
         cfg["logLevel"] =
             (level == "debug" || level == "trace") ? "error" : "trace";
         std::ofstream out(path, std::ios::binary | std::ios::trunc);

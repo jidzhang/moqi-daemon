@@ -621,11 +621,12 @@ bool upsertImportedThemes(const Json::Value& newThemes,
   }
   std::vector<std::string> ids(list.size());
   for (Json::ArrayIndex i = 0; i < list.size(); ++i) {
-    ids[i] = normalizeThemeId(list[i].get("id", "").asString());
+    // 存量文件里的 themes 元素可能被手改成非对象——安全取值不抛。
+    ids[i] = normalizeThemeId(jsonStringOf(list[i], "id"));
   }
   for (Json::ArrayIndex i = 0; i < newThemes.size(); ++i) {
     Json::Value theme = newThemes[i];
-    theme["id"] = normalizeThemeId(theme.get("id", "").asString());
+    theme["id"] = normalizeThemeId(jsonStringOf(theme, "id"));
     theme["source"] = "imported";
     theme["source_file"] = sourceFile;
     bool replaced = false;
@@ -633,8 +634,8 @@ bool upsertImportedThemes(const Json::Value& newThemes,
       const Json::ArrayIndex ai = static_cast<Json::ArrayIndex>(k);
       if (ids[k] != theme["id"].asString()) continue;
       // 同 id 去重：仅同一皮肤文件可刷新，不覆盖其它来源。
-      if (list[ai].get("source_file", "").asString() == sourceFile &&
-          list[ai].get("source", "").asString() == "imported") {
+      if (jsonStringOf(list[ai], "source_file") == sourceFile &&
+          jsonStringOf(list[ai], "source") == "imported") {
         list[ai] = theme;
       }
       replaced = true;
@@ -651,10 +652,10 @@ bool upsertImportedThemes(const Json::Value& newThemes,
   for (const auto& item : list) items.push_back(item);
   std::sort(items.begin(), items.end(), [](const Json::Value& a,
                                            const Json::Value& b) {
-    const std::string la = a.get("label", "").asString();
-    const std::string lb = b.get("label", "").asString();
+    const std::string la = jsonStringOf(a, "label");
+    const std::string lb = jsonStringOf(b, "label");
     if (la != lb) return la < lb;
-    return a.get("id", "").asString() < b.get("id", "").asString();
+    return jsonStringOf(a, "id") < jsonStringOf(b, "id");
   });
   Json::Value out(Json::objectValue);
   out["version"] = 1;

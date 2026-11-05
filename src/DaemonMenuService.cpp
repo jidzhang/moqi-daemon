@@ -308,19 +308,19 @@ std::vector<ThemeDefinition> DaemonMenuService::loadThemes() {
   };
   auto loadFrom = [&](const std::wstring& path, bool builtin) {
     Json::Value j = readJsonFile(path);
-    const Json::Value& arr = j["themes"];
+    const Json::Value& arr = jsonMemberOf(j, "themes");
     if (!arr.isArray()) return;
     for (const auto& t : arr) {
       ThemeDefinition d;
-      d.id = normalize(t.get("id", "").asString());
+      d.id = normalize(jsonStringOf(t, "id"));
       if (d.id.empty()) continue;
-      d.label = t.get("label", "").asString();
+      d.label = jsonStringOf(t, "label");
       // Go normalizeThemeDefinition：label 空回退 id。
       size_t lb = d.label.find_first_not_of(" \t");
       size_t le = d.label.find_last_not_of(" \t");
       d.label = lb == std::string::npos ? "" : d.label.substr(lb, le - lb + 1);
       if (d.label.empty()) d.label = d.id;
-      std::string source = normalize(t.get("source", "").asString());
+      std::string source = normalize(jsonStringOf(t, "source"));
       if (source.empty()) source = "imported";
       if (builtin) {
         builtinIds.push_back(d.id);
@@ -443,18 +443,19 @@ Menu::MenuState DaemonMenuService::gather(DaemonEngine& engine) {
     state.themes.push_back(e);
   }
 
-  // appearance_config.json
+  // appearance_config.json。取值一律走安全访问器（RimeCore.h）：手改坏
+  // （键类型不符）时裸 asInt/asBool 会抛，菜单构建会崩。
   Json::Value cfg = loadAppearanceConfig();
-  state.theme = cfg.get("candidate_theme", "default").asString();
+  state.theme = jsonStringOf(cfg, "candidate_theme", "default");
   // 默认行内预编辑（对齐 Go defaultStyle：InlinePreedit="composition"）。
   // 配置文件缺失/无此键时必须默认开，否则拼音会从光标处挪进候选窗
   //（2026-11-03 用户重装后实报"拼音和候选放一起了"）。
-  state.inlinePreedit = cfg.get("inline_preedit", true).asBool();
+  state.inlinePreedit = jsonBoolOf(cfg, "inline_preedit", true);
   {
     // 镜像 Go effectiveCandidatePerRow()：竖排=1；横排=min(配置值, 总候选数)，
     // 总候选数只认 3/5/7/9，否则 7。竖排配置值 Go 写 1、本实现写 0，都认。
-    int perRow = cfg.get("candidate_per_row", 9).asInt();
-    int count = cfg.get("candidate_count", 7).asInt();
+    int perRow = jsonIntOf(cfg, "candidate_per_row", 9);
+    int count = jsonIntOf(cfg, "candidate_count", 7);
     if (count != 3 && count != 5 && count != 7 && count != 9) count = 7;
     state.candCount = count;
     state.horizontal = perRow > 1;
@@ -468,44 +469,43 @@ Menu::MenuState DaemonMenuService::gather(DaemonEngine& engine) {
                           : 9;
     state.perRow = state.horizontal ? (perRow < count ? perRow : count) : 7;
   }
-  state.spacing = cfg.get("candidate_spacing", 20).asInt();
-  state.fontPoint = cfg.get("font_point", 14).asInt();
-  state.commentFontPoint =
-      cfg.get("candidate_comment_font_point", 12).asInt();
+  state.spacing = jsonIntOf(cfg, "candidate_spacing", 20);
+  state.fontPoint = jsonIntOf(cfg, "font_point", 14);
+  state.commentFontPoint = jsonIntOf(cfg, "candidate_comment_font_point", 12);
   state.fontFace =
-      cfg.get("font_face", "Microsoft YaHei UI").asString();
+      jsonStringOf(cfg, "font_face", "Microsoft YaHei UI");
   // 存量配置里旧默认 "Segoe UI"（无 CJK 字形，GDI 回退成宋体）迁移为雅黑；
   // 菜单里仍可手动选回。2026-11-03 用户重启后实报"候选字都是宋体"。
   // 只在未打过迁移标记时做：否则用户主动选 Segoe UI 会在下次 gather 时
   // 被改回雅黑（选了不生效/重启就丢）。
-  if (!cfg.get("font_face_migrated", false).asBool() &&
+  if (!jsonBoolOf(cfg, "font_face_migrated") &&
       state.fontFace == "Segoe UI") {
     state.fontFace = "Microsoft YaHei UI";
   }
   state.commentFontFace =
-      cfg.get("candidate_comment_font_face", "Consolas").asString();
-  state.bgColor = cfg.get("candidate_background_color", "#ffffff").asString();
+      jsonStringOf(cfg, "candidate_comment_font_face", "Consolas");
+  state.bgColor = jsonStringOf(cfg, "candidate_background_color", "#ffffff");
   state.hlColor =
-      cfg.get("candidate_highlight_color", "#c6ddf9").asString();
-  state.textColor = cfg.get("candidate_text_color", "#000000").asString();
+      jsonStringOf(cfg, "candidate_highlight_color", "#c6ddf9");
+  state.textColor = jsonStringOf(cfg, "candidate_text_color", "#000000");
   state.hlTextColor =
-      cfg.get("candidate_highlight_text_color", "#000000").asString();
+      jsonStringOf(cfg, "candidate_highlight_text_color", "#000000");
   state.commentColor =
-      cfg.get("candidate_comment_color", "#000000").asString();
+      jsonStringOf(cfg, "candidate_comment_color", "#000000");
   state.commentHlColor =
-      cfg.get("candidate_comment_highlight_color", "#000000").asString();
-  state.inputStateShared = cfg.get("input_state_shared", false).asBool();
-  state.autoPairQuotes = cfg.get("auto_pair_quotes", false).asBool();
+      jsonStringOf(cfg, "candidate_comment_highlight_color", "#000000");
+  state.inputStateShared = jsonBoolOf(cfg, "input_state_shared");
+  state.autoPairQuotes = jsonBoolOf(cfg, "auto_pair_quotes");
   state.semicolonSecond =
-      cfg.get("semicolon_select_second", false).asBool();
+      jsonBoolOf(cfg, "semicolon_select_second");
 
   // 云剪贴板 / 启动器调试
   Json::Value cloud = readJsonFile(root + L"\\cloud_clipboard.json");
-  state.cloudEnabled = cloud.get("enabled", false).asBool();
+  state.cloudEnabled = jsonBoolOf(cloud, "enabled");
   std::wstring localRoot = localAppDataRoot();
   Json::Value launcher =
       readJsonFile(localRoot + L"\\MoqiLauncher.json");
-  std::string level = launcher.get("logLevel", "error").asString();
+  std::string level = jsonStringOf(launcher, "logLevel", "error");
   state.launcherDebug = (level == "debug" || level == "trace");
   return state;
 }
@@ -851,7 +851,7 @@ void DaemonMenuService::openCommandTarget(int id) {
     case Menu::ID_USER_DIR: {
       Json::Value ssc = readJsonFile(root + L"\\scheme_set.json");
       std::wstring cur =
-          utf8ToWs(ssc.get("current", "Rime").asString());
+          utf8ToWs(jsonStringOf(ssc, "current", "Rime"));
       // 全新用户/清过配置的机器上方案集目录可能还不存在：先建再打开，
       // 否则菜单项是死的（2026-11-03 Go 退休后不再有后端替我们建目录）。
       const std::wstring dir = root + L"\\" + cur;
