@@ -105,8 +105,8 @@ int main() {
   const wchar_t* program = _wgetenv(L"MOQI_PROGRAM_DIR");
   const wchar_t* dllDir = _wgetenv(L"MOQI_RIME_DLL_DIR");
   if (!program || !dllDir) {
-    std::cout << "SKIP: MOQI_PROGRAM_DIR / MOQI_RIME_DLL_DIR not set"
-              << std::endl;
+    std::wcout << L"SKIP: MOQI_PROGRAM_DIR / MOQI_RIME_DLL_DIR not set"
+               << std::endl;
     return 0; // 环境未配（如纯单测机）不算失败
   }
   // 与 main.cpp 的注入一致：数据目录 = {program}\moqi-ime\input_methods\rime。
@@ -123,6 +123,24 @@ int main() {
                << std::endl;
     return 0; // 布局不在（如纯单测机）不算失败
   }
+  // rime.dll 也必须在（x86 版在安装根）：只有数据树没有 dll 的机器上，
+  // engine init 必失败——那不是回归，应跳过而不是红。
+  const std::wstring dllPath = std::wstring(dllDir) + L"\\rime.dll";
+  if (::GetFileAttributesW(dllPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
+    std::wcout << L"SKIP: rime.dll not present: " << dllPath << std::endl;
+    return 0;
+  }
+  // 用户目录必须重定向（MOQI_USER_DATA_DIR 由 ctest 注入）：真用户词典
+  // 绝不让测试进程碰——学习写入会污染真人候选顺序，且 rime 的 LevelDB
+  // userdb 非并发安全（2026-11-05 实证测试进程曾对活词典跑 RepairDB）。
+  const wchar_t* userDataDir = _wgetenv(L"MOQI_USER_DATA_DIR");
+  if (!userDataDir || !*userDataDir) {
+    std::wcout << L"SKIP: MOQI_USER_DATA_DIR not set "
+                  L"(refusing to touch the real user dictionary)"
+               << std::endl;
+    return 0;
+  }
+  ::CreateDirectoryW(userDataDir, nullptr);  // 首次运行时目录可能不存在
 
   DaemonEngine engine;
   engine.ensureEngine();

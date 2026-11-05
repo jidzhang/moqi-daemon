@@ -67,18 +67,18 @@ Json::Value parseJson(const std::string& data) {
   return v;
 }
 
-// 错误文案逐字节锁（与 DaemonCloudConfig.cpp 内嵌 UTF-8 一致，用户已见
-// 的提示不换说法）。
-const char kErrIncomplete[] =
+// 错误文案字节锁：导出常量必须与 Go 契约逐字一致（改文案=改契约）。
+// 行为断言用导出常量比较，这四个字面量只负责锁常量本身的字节。
+const char kErrIncompleteBytes[] =
     "\xe4\xba\x91\xe5\x89\xaa\xe8\xb4\xb4\xe6\x9d\xbf\xe6\x9c\xaa\xe9\x85\x8d"
     "\xe7\xbd\xae\xe5\xae\x8c\xe6\x95\xb4";  // 云剪贴板未配置完整
-const char kErrBadClipName[] =
+const char kErrBadClipNameBytes[] =
     "\xe9\x9d\x9e\xe6\xb3\x95\xe4\xba\x91\xe5\x89\xaa\xe8\xb4\xb4\xe6\x9d\xbf"
     "\xe6\x96\x87\xe4\xbb\xb6\xe5\x90\x8d";  // 非法云剪贴板文件名
-const char kErrBadDeviceId[] =
+const char kErrBadDeviceIdBytes[] =
     "\xe6\x9c\xac\xe6\x9c\xba\xe5\x90\x8c\xe6\xad\xa5 ID "
     "\xe6\x97\xa0\xe6\x95\x88";  // 本机同步 ID 无效
-const char kErrNeedUserPwd[] =
+const char kErrNeedUserPwdBytes[] =
     "\xe8\xaf\xb7\xe5\xa1\xab\xe5\x86\x99\xe7\x94\xa8\xe6\x88\xb7\xe5\x90\x8d"
     "\xe5\x92\x8c\xe5\xaf\x86\xe7\xa0\x81";  // 请填写用户名和密码
 
@@ -157,6 +157,19 @@ int main() {
     check(Moqi::loadCloudClipboardHotkey(root) == "Ctrl+0",
           "guard: broken json hotkey -> Ctrl+0");
   }
+  // 合法但非对象的 JSON（手改坏成数组/标量）：jsoncpp 的 get/operator[]
+  // 会抛 Json::LogicError，曾可让 daemon 启动即崩——必须按"没配置"处理。
+  writeAll(cfgPath, "[]\n");
+  {
+    const CloudClipboardConfig cfg = Moqi::loadCloudClipboardConfig(root);
+    check(!cfg.enabled && cfg.minIntervalSec == 10,
+          "guard: array json -> defaults, no throw");
+    check(Moqi::loadCloudClipboardHotkey(root) == "Ctrl+0",
+          "guard: array json hotkey -> Ctrl+0");
+  }
+  writeAll(cfgPath, "5\n");
+  check(Moqi::loadCloudClipboardConfig(root).baseUrl.empty(),
+        "guard: scalar json -> defaults");
 
   // ---- 4. DPAPI 密码回环 ----
   check(Moqi::saveCloudClipboardPassword("s3cret-pw", root), "pw: save ok");
@@ -193,6 +206,9 @@ int main() {
           "migrate: dpapi file written");
     check(Moqi::loadCloudClipboardConfig(root).password == "plainpw",
           "migrate: reload prefers dpapi file");
+    // 迁移后明文必须立即从 json 抹掉（其余字段原样重写）。
+    check(readAll(cfgPath).find("password") == std::string::npos,
+          "migrate: json scrubbed of plaintext password");
   }
   ::DeleteFileW(pwPath.c_str());
   writeAll(cfgPath, "{\"password\": \"   \"}\n");
@@ -250,47 +266,65 @@ int main() {
   check(Moqi::outboundAllowed(root), "egress: broken json allows");
   writeAll(egressPath, "{\"allow_outbound\": \"false\"}\n");
   check(Moqi::outboundAllowed(root), "egress: non-bool value ignored");
+  writeAll(egressPath, "[]\n");
+  check(Moqi::outboundAllowed(root), "egress: array json allows");
   ::DeleteFileW(egressPath.c_str());
 
   // ---- 8. 同步引擎零网络校验路径 ----
-  // deleteClip 不走总闸（纯本地校验先行）；其余方法内部读真机总闸文件，
-  // 被本机拦时跳过，不让单测依赖机器状态。
-  const bool egressOpenOnThisMachine = Moqi::outboundAllowed();
+  // 全部走 egressRoot 重定向（第二个构造参数）：不读真机 network_egress.json，
+  // 覆盖度不依赖机器状态。
   {
+    check(std::string(Moqi::kErrCloudIncomplete) == kErrIncompleteBytes &&
+              std::string(Moqi::kErrCloudBadClipName) == kErrBadClipNameBytes &&
+              std::string(Moqi::kErrCloudBadDeviceId) == kErrBadDeviceIdBytes &&
+              std::string(Moqi::kErrCloudNeedUserPwd) == kErrNeedUserPwdBytes,
+          "text: exported error constants byte-locked to Go wording");
+
     CloudClipboardConfig empty;
-    CloudClipboardSync sync(empty);
+    CloudClipboardSync sync(empty, root);
     std::string err;
-    check(!sync.deleteClip("../evil.txt", &err) && err == kErrBadClipName,
+    check(!sync.deleteClip("../evil.txt", &err) &&
+              err == Moqi::kErrCloudBadClipName,
           "sync: deleteClip rejects bad name before config check");
     err.clear();
     check(!sync.deleteClip(std::string(32, 'a') + ".txt", &err) &&
-              err == kErrIncomplete,
+              err == Moqi::kErrCloudIncomplete,
           "sync: deleteClip incomplete config message");
-    if (egressOpenOnThisMachine) {
-      err.clear();
-      int uploaded = -1;
-      check(!sync.uploadUserDictSnapshots(root, "Rime", "../bad id",
-                                          &uploaded, &err) &&
-                err == kErrBadDeviceId && uploaded == 0,
-            "sync: upload rejects bad device id");
-      err.clear();
-      CloudClipboardConfig needPwd;
-      needPwd.baseUrl = "https://dav.example.com";
-      needPwd.username = "alice";
-      CloudClipboardSync t1(needPwd);
-      check(!t1.testConnection(&err) && err == kErrNeedUserPwd,
-            "sync: testConnection missing password message");
-      err.clear();
-      CloudClipboardConfig badScheme = needPwd;
-      badScheme.password = "pw";
-      badScheme.baseUrl = "ftp://dav.example.com/";
-      CloudClipboardSync t2(badScheme);
-      check(!t2.testConnection(&err) && err == Moqi::webDavRejectionMessage(),
-            "sync: testConnection rejects non-http scheme");
-    } else {
-      std::printf("SKIP sync egress-gated checks (machine blocks outbound)\n");
-    }
+    err.clear();
+    int uploaded = -1;
+    check(!sync.uploadUserDictSnapshots(root, "Rime", "../bad id",
+                                        &uploaded, &err) &&
+              err == Moqi::kErrCloudBadDeviceId && uploaded == 0,
+          "sync: upload rejects bad device id");
+    err.clear();
+    CloudClipboardConfig needPwd;
+    needPwd.baseUrl = "https://dav.example.com";
+    needPwd.username = "alice";
+    CloudClipboardSync t1(needPwd, root);
+    check(!t1.testConnection(&err) && err == Moqi::kErrCloudNeedUserPwd,
+          "sync: testConnection missing password message");
+    err.clear();
+    CloudClipboardConfig badScheme = needPwd;
+    badScheme.password = "pw";
+    badScheme.baseUrl = "ftp://dav.example.com/";
+    CloudClipboardSync t2(badScheme, root);
+    check(!t2.testConnection(&err) && err == Moqi::webDavRejectionMessage(),
+          "sync: testConnection rejects non-http scheme");
+    // 总闸关死时 deleteClip 也要拒绝（与其余出站口一致的 2 秒缓存语义）。
+    writeAll(egressPath, "{\"allow_outbound\": false}\n");
+    err.clear();
+    CloudClipboardSync blocked(empty, root);
+    check(!blocked.deleteClip(std::string(32, 'a') + ".txt", &err) &&
+              err == Moqi::kOutboundBlockedMessage,
+          "sync: deleteClip obeys egress master switch");
+    ::DeleteFileW(egressPath.c_str());
   }
+
+  // 收尾：不留残骸在构建目录。
+  ::DeleteFileW(cfgPath.c_str());
+  ::DeleteFileW(pwPath.c_str());
+  ::DeleteFileW(egressPath.c_str());
+  ::RemoveDirectoryW(root.c_str());
 
   std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
   return g_fail == 0 ? 0 : 1;

@@ -51,11 +51,20 @@ bool saveCloudClipboardPassword(const std::string& password,
 // {"allow_outbound": false} 时四个出站口（AI/云剪贴/词库同步/WebDAV）统一拒绝。
 bool outboundAllowed(const std::wstring& rootOverride = L"");
 extern const char kOutboundBlockedMessage[];
+// 用户可见错误文案（与 Go 契约逐字一致；曾内联在 .cpp 多处，导出成常量
+// 防漂移，单测对常量做字节锁）。
+extern const char kErrCloudIncomplete[];   // 云剪贴板未配置完整
+extern const char kErrCloudBadClipName[];  // 非法云剪贴板文件名
+extern const char kErrCloudBadDeviceId[];  // 本机同步 ID 无效
+extern const char kErrCloudNeedUserPwd[];  // 请填写用户名和密码
 
 // = Go cloudclipboard::Sync（上传引擎）
 class CloudClipboardSync {
  public:
-  explicit CloudClipboardSync(const CloudClipboardConfig& cfg);
+  // egressRootOverride 仅供单测把出站总闸文件重定向到测试目录（否则
+  // 同步方法的校验路径覆盖度依赖真机 network_egress.json 状态）。
+  explicit CloudClipboardSync(const CloudClipboardConfig& cfg,
+                              const std::wstring& egressRootOverride = L"");
 
   void reloadConfig(const CloudClipboardConfig& cfg);
 
@@ -91,6 +100,7 @@ class CloudClipboardSync {
   WebDavClient* client();  // 懒建；未配置完整返回 null
 
   CloudClipboardConfig cfg_;
+  std::wstring egressRoot_;  // 出站总闸文件根（默认空=真 %APPDATA%\Moqi）
   std::mutex mutex_;
   std::unique_ptr<WebDavClient> client_;
   ULONGLONG lastUploadAt_ = 0;

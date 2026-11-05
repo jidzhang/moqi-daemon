@@ -15,11 +15,16 @@ using Moqi::utf8FirstRune;
 using Moqi::utf8RuneCount;
 using Moqi::utf8RuneSuffix;
 
+static int g_pass = 0;
 static int g_failed = 0;
 
 static void check(bool ok, const char* what) {
   std::printf("%s %s\n", ok ? "PASS" : "FAIL", what);
-  if (!ok) ++g_failed;
+  if (ok) {
+    ++g_pass;
+  } else {
+    ++g_failed;
+  }
 }
 
 int main() {
@@ -68,7 +73,7 @@ int main() {
   }
 
   if (g_failed == 0) {
-    std::printf("16 passed, 0 failed\n");
+    std::printf("%d passed, 0 failed\n", g_pass);
     return 0;
   }
   std::printf("%d FAILED\n", g_failed);

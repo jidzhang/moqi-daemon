@@ -25,8 +25,6 @@ set(JSONCPP_WITH_POST_BUILD_UNITTEST OFF CACHE BOOL "" FORCE)
 add_subdirectory("${MOQI_WIN_DIR}/jsoncpp" jsoncpp EXCLUDE_FROM_ALL)
 
 # add_test 生效前提（此前漏了，ctest 报 No tests were found）。
-# 必须放在 jsoncpp 的 add_subdirectory 之后：放在前面会把 jsoncpp 自带的
-# 测试也注册进来（EXCLUDE_FROM_ALL 没编它们的 exe，ctest 报找不到可执行文件）。
 enable_testing()
 
 add_executable(MoqiDaemon
@@ -148,8 +146,9 @@ add_test(NAME cloud_config_test COMMAND cloud_config_test)
 
 # 引擎级回归：shima 错字提顶后的显示/提交一致性（需 x86 rime.dll 布局，
 # 环境变量由 ctest 注入；布局不在/无环境时测试自跳过）。
-# 布局 = 安装根形态：C:\work\moqi-daemon-full（根下 x86 rime.dll +
-# moqi-ime\input_methods\rime\data；backendDir 由测试自己补成 moqi-ime）。
+# 布局 = 安装根形态（根下 x86 rime.dll + moqi-ime\input_methods\rime\data；
+# backendDir 由测试自己补成 moqi-ime）。用户目录重定向到构建目录的
+# 临时目录——真用户词典绝不让测试进程碰（LevelDB 非并发安全）。
 add_executable(daemon_engine_desync_test
   tests/daemon_engine_desync_test.cpp
   src/DaemonAI.cpp
@@ -167,7 +166,7 @@ target_include_directories(daemon_engine_desync_test PRIVATE
 target_link_libraries(daemon_engine_desync_test jsoncpp_static)
 add_test(NAME daemon_engine_desync_test COMMAND daemon_engine_desync_test)
 set_tests_properties(daemon_engine_desync_test PROPERTIES
-  ENVIRONMENT "MOQI_PROGRAM_DIR=C:/work/moqi-daemon-full;MOQI_RIME_DLL_DIR=C:/work/moqi-daemon-full")
+  ENVIRONMENT "MOQI_PROGRAM_DIR=C:/work/moqi-daemon-full;MOQI_RIME_DLL_DIR=C:/work/moqi-daemon-full;MOQI_USER_DATA_DIR=${CMAKE_CURRENT_BINARY_DIR}/desync-user-data")
 
 target_include_directories(MoqiDaemon PRIVATE
   src

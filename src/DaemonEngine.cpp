@@ -50,7 +50,13 @@ void DaemonEngine::ensureEngine() {
   // 2026-11-04 单引擎架构：daemon 直接使用标准 Rime 用户目录
   // %APPDATA%\Moqi\<方案集>（默认 Rime）。雾凇等整包按官方方式解压到
   // 这里即可，用户词典/学习/部署全部落在标准位置。
-  const std::wstring masterDir = sharedUserConfigDir();
+  // MOQI_USER_DATA_DIR：单测把用户目录重定向到临时目录——真用户词典绝不
+  // 让测试进程碰（rime 的 LevelDB userdb 非并发安全；2026-11-05 实证过
+  // 测试进程对活用户词典跑过 RepairDB）。生产不设此变量，行为不变。
+  const wchar_t* userDataDirEnv = _wgetenv(L"MOQI_USER_DATA_DIR");
+  const std::wstring masterDir =
+      userDataDirEnv && *userDataDirEnv ? std::wstring(userDataDirEnv)
+                                        : sharedUserConfigDir();
   runtime.requestInit(g_daemonProgramDir, g_daemonBackendDir, dllDir, masterDir);
   const ULONGLONG deadline = ::GetTickCount64() + 30000;
   while (!runtime.ready() && !runtime.failed() && ::GetTickCount64() < deadline) {

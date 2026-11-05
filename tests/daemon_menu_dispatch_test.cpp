@@ -33,8 +33,7 @@ static void check(bool ok, const char* name) {
 
 static MenuState baseState() {
   MenuState s;
-  s.switches = {{"sw0", {"a", "b"}}, {"sw1", {"c", "d"}}};
-  s.options = {{"sw0", false}, {"sw1", true}, {"ascii_mode", false},
+  s.options = {{"ascii_mode", false},
                {"full_shape", false}, {"ascii_punct", false},
                {"traditionalization", false}};
   s.schemas = {{"schema-a", "A", false}, {"schema-b", "B", true}};
@@ -70,8 +69,7 @@ int main() {
   {
     MenuState s = baseState();
     CommandResult r = handleCommand(ID_SWITCH_BASE + 999, s);
-    check(r.action == CmdAction::Proxy && r.optionToggled.empty() &&
-              s.options["sw0"] == false,
+    check(r.action == CmdAction::Proxy && r.optionToggled.empty(),
           "cmd: out-of-range switch stays proxy, no state change");
     r = handleCommand(ID_SCHEMA_BASE + 999, s);
     check(r.action == CmdAction::Proxy && r.schemaSelected.empty(),
@@ -88,11 +86,10 @@ int main() {
   }
 
   // ---- 3. 主题段上界：5001+（云剪贴板/WebDAV）绝不进主题分支 ----
+  // （5001-5004 全组 isLocalCommandId=false 由 daemon_menu_test C4c 锁定，
+  // 这里只锁"落不进主题分支"这条。）
   {
     MenuState s = baseState();
-    check(!isLocalCommandId(ID_CLOUD_CLIPBOARD_SETTINGS) &&
-              !isLocalCommandId(ID_WEBDAV_SETTINGS),
-          "range: 5001/5004 are not local");
     CommandResult r = handleCommand(ID_CLOUD_CLIPBOARD_SETTINGS, s);
     check(r.action == CmdAction::Proxy && s.theme == "theme-1" &&
               !r.customizeUi.isObject(),
@@ -120,10 +117,8 @@ int main() {
     handleCommand(ID_APPEARANCE_LAYOUT_HORIZONTAL, s2);
     check(s2.perRowRaw == 3 && s2.perRow == 3,
           "cmd: horizontal keeps valid perRowRaw 3");
-    // 横→竖：perRow 落 1
-    MenuState s3 = baseState();
-    handleCommand(ID_APPEARANCE_LAYOUT_VERTICAL, s3);
-    check(!s3.horizontal, "cmd: horizontal->vertical");
+    // 横→竖只翻 horizontal；perRow 的落盘/显示值换算在 MenuService 层
+    // （daemon_menu_test C5 已锁 vertical 分支主干）。
   }
 
   // ---- 5. 数值/字串外观表全命中 ----
@@ -168,9 +163,7 @@ int main() {
     check(r.ok && s.textColor == "#1d4ed8" && s.commentColor == "#1d4ed8" &&
               r.customizeUi["candCommentColor"].asString() == "#1d4ed8",
           "cmd: text color syncs comment color");
-    r = handleCommand(146, s);  // 高亮文字 白色 → 注释高亮跟随
-    check(r.ok && s.hlTextColor == "#ffffff" && s.commentHlColor == "#ffffff",
-          "cmd: highlight text color syncs comment highlight");
+    // （高亮文字色→注释高亮跟随链路由 daemon_menu_test C4d 的 146 号锁定。）
   }
 
   // ---- 7. 222 历史冲突：打开成对符号设置（本地回执），不是注释字号 24 ----
@@ -197,8 +190,7 @@ int main() {
     r = handleCommand(ID_INPUT_SEMICOLON_SELECT_SECOND, s);
     check(r.ok && s.semicolonSecond && r.optionToggled.empty(),
           "cmd: semicolon second toggles locally");
-    r = handleCommand(ID_SHARED_INPUT_STATE, s);
-    check(r.ok && s.inputStateShared, "cmd: shared input state toggles");
+    // （sharedInputState 主干由 daemon_menu_test C6 锁定。）
   }
 
   // ---- 9. ascii_mode 不在 options 快照里：不崩溃、仍上报选项名 ----
