@@ -132,8 +132,8 @@ Json::Value buildMenu(const MenuState& state) {
   // 3) 置顶短语/简拼/更新/刷新
   items.append(makeItem(18, "打开置顶短语"));
   items.append(makeItem(19, "打开超级简拼"));
-  items.append(makeItem(ID_UPDATE_CONFIG, "在线更新配置"));
-  items.append(makeItem(ID_DEPLOY, "重新加载配置(&R)"));
+  items.append(makeItem(ID_UPDATE_CONFIG, "在线更新方案"));
+  items.append(makeItem(ID_DEPLOY, "重新部署方案(&R)"));
   items.append(makeSeparator());
 
   // 5) 输入状态共享

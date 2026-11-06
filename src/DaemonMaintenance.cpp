@@ -235,12 +235,12 @@ bool gitIsRepo(const std::wstring& git, const std::wstring& dir) {
 bool runFullRedeployImpl(std::string* message) {
   RimeRuntime& runtime = RimeRuntime::instance();
   if (!runtime.ready() || runtime.inprocUserDir().empty()) {
-    if (message) *message = "引擎尚未就绪";
+    if (message) *message = "输入法还没准备好，请稍等片刻再试";
     return false;
   }
   if (runtime.rimeStartMaintenance == nullptr ||
       runtime.rimeJoinMaintenanceThread == nullptr) {
-    if (message) *message = "当前引擎不支持重新部署";
+    if (message) *message = "当前版本不支持重新部署方案";
     return false;
   }
   // 1) 重新灌 in-proc patch（用户可能改过方案集目录里的 custom yaml）。
@@ -264,7 +264,7 @@ bool runFullRedeployImpl(std::string* message) {
     started = runtime.rimeStartMaintenance(1) != 0;
     runtime.rimeJoinMaintenanceThread();
   }
-  if (message) *message = started ? "重新部署成功" : "重新部署失败";
+  if (message) *message = started ? "部署成功，新方案已生效" : "方案部署失败，请稍后再试";
   return started;
 }
 
@@ -797,17 +797,17 @@ bool gitPullCurrentSchemeSet(std::string* message) {
   if (run.exitCode != 0) {
     const std::string detail =
         lines.empty() ? std::string() : truncateUtf8(lines.back(), 96);
-    return fail(detail.empty() ? "更新配置失败" : "更新配置失败: " + detail);
+    return fail(detail.empty() ? "更新方案失败" : "更新方案失败: " + detail);
   }
   if (!lines.empty()) {
     const std::string last = toLower(lines.back());
     if (last.find("already up to date") != std::string::npos ||
         last.find("already up-to-date") != std::string::npos) {
-      if (message) *message = "配置已是最新";
+      if (message) *message = "方案已是最新";
       return true;
     }
   }
-  if (message) *message = "更新配置成功";
+  if (message) *message = "更新方案成功";
   return true;
 }
 

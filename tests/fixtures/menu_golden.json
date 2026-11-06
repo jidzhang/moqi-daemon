@@ -170,7 +170,7 @@
   },
   {
     "id": 17,
-    "text": "在线更新配置",
+    "text": "在线更新方案",
     "checked": false,
     "enabled": true,
     "submenu": [],
@@ -178,7 +178,7 @@
   },
   {
     "id": 10,
-    "text": "重新加载配置(&R)",
+    "text": "重新部署方案(&R)",
     "checked": false,
     "enabled": true,
     "submenu": [],

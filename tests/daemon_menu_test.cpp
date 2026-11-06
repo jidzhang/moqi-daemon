@@ -5,6 +5,7 @@
 // 断言 buildMenu(state) 与黄金逐项一致（id/text/checked/enabled/separator/
 // submenu 全对齐），命令表断言 handleCommand 的分发与状态变更。
 // 行为变化的正当流程：改 Go 侧行为 -> 重新抓黄金 -> 这里改断言 -> 再改核心。
+// Go 退休后的产品文案改动直接更新 fixture（2026-11-06：部署/更新两项统一"方案"口径）。
 #include "DaemonMenuCore.h"
 
 #include <cstdio>
