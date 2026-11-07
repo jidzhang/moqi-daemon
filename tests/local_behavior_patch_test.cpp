@@ -51,6 +51,7 @@ static const char* kProductBody =
     "  translator/enable_transpose: true\n"
     "  translator/transpose_credibility: -8\n"
     "  translator/correction_scan_window: 4\n"
+    "  translator/enable_word_initial_deletion: true\n"
     "  translator/enable_deletion: true\n"
     "  translator/deletion_credibility: -8\n"
     "  translator/enable_substitution: true\n"
@@ -67,22 +68,27 @@ int main() {
   const std::string essay = "zh-hans-t-essay-bgw";
 
   // --- 事故回归锚：空配置 + 无 gram = 只有 mixed_pair 守卫一行（不是空体）---
-  // 注意：mixed_pair 默认开，即使无 gram 也会 emit disable_user_dict_for_patterns
-  // 空体只在 mixed_pair 显式关闭且无 gram 且无任何触发器时才出现。
+  // 注意：mixed_pair 默认开 + 纠错无条件写入（2026-11-07 修复：
+  // 纠错不再绑在 gram 检测上，无 gram 的 std/lite/wiki 也要有纠错）。
   {
     const std::string body =
         buildLocalBehaviorPatchBody(empty, emptyCtx, "");
     check(contains(body, "disable_user_dict_for_patterns"),
-          "empty cfg + no grammar -> only mixed_pair guard (1 line)");
+          "empty cfg -> mixed_pair guard present");
     check(!contains(body, "abbrev"), "no abbrev_sentences ever (10-26 incident)");
     check(!contains(body, "grammar/language"),
           "no grammar/language line when lang empty");
-    // 显式关 mixed_pair + 无 gram + 无触发器 = 真空体
+    check(contains(body, "enable_transpose: true"),
+          "correction enabled even without gram");
+    check(contains(body, "correction_scan_window: 4"),
+          "scan window 4 present even without gram");
+    // mixed_pair 关 + 无 gram + 无触发器：纠错行仍写入（不再真空体）
     const Json::Value ctxOff = obj(
         "{\"bigram_rerank\":{\"mixed_pair\":false}}");
-    const std::string empty2 =
+    const std::string body2 =
         buildLocalBehaviorPatchBody(empty, ctxOff, "");
-    check(empty2.empty(), "all off -> truly empty body");
+    check(!body2.empty() && contains(body2, "enable_transpose"),
+          "correction always present (never empty body)");
   }
 
   // --- 产品默认体逐字节锁定 ---
