@@ -45,6 +45,7 @@ int main() {
     st.options[names[k]] = false;
   }
   st.schemas.push_back({"rime_frost", "白霜拼音", true});
+  st.schemas.push_back({"rime_frost_t9", "中文九键", false});
   st.schemas.push_back({"rime_frost_flypy", "白霜小鹤双拼", false});
   st.themes.push_back({"default", "默认主题"});
 
@@ -75,12 +76,13 @@ int main() {
   }
   check(shapeOk, "lite: top-level shape = 定稿清单（4 开关+方案+部署+状态+外观+设置+文件夹+讨论）");
 
-  // 2) 被裁项全树零出现。
+  // 2) 被裁项全树零出现（2026-11-07 追加：导入皮肤/中文九键/同步文件夹）。
   const char* banned[] = {"打开置顶短语", "打开超级简拼", "在线更新方案",
                           "同步设置",    "WebDAV",       "云剪贴板",
                           "同步用户词库", "维护",         "开启调试",
                           "重启引擎",    "退出引擎",     "帮助文档",
-                          "配置AI助手"};
+                          "配置AI助手",  "导入皮肤",     "中文九键",
+                          "同步文件夹",  "共享文件夹"};
   std::string flat = menu.toStyledString();
   bool noneBanned = true;
   for (const char* b : banned) {
@@ -105,6 +107,21 @@ int main() {
   CommandResult r = handleCommand(2007, s2);
   check(r.action == CmdAction::Local && r.optionToggled == "ascii_punct",
         "lite: handleCommand(2007) 翻转 ascii_punct（原始索引保持）");
+
+  // 5) 方案过滤同法：T9 跳过后小鹤双拼仍为原始索引 id 1002。
+  bool schemaOk = false;
+  for (const auto& top : menu) {
+    if (top.get("text", "").asString() == "输入方案(&I)") {
+      schemaOk = top["submenu"].size() == 2 &&
+                 top["submenu"][1]["id"].asInt() == 1002 &&
+                 top["submenu"][1].get("text", "").asString() == "白霜小鹤双拼";
+    }
+  }
+  check(schemaOk, "lite: 方案组=2 项，小鹤双拼 id=1002（T9 跳过不重排）");
+  MenuState s3 = st;
+  CommandResult r3 = handleCommand(1002, s3);
+  check(r3.action == CmdAction::Local && r3.schemaSelected == "rime_frost_flypy",
+        "lite: handleCommand(1002) 选中 rime_frost_flypy（原始索引保持）");
 
   std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
   return g_fail == 0 ? 0 : 1;

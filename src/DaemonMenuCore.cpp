@@ -138,6 +138,11 @@ Json::Value buildMenu(const MenuState& state) {
     for (const auto& sc : state.schemas) {
       std::string text = sc.name.empty() ? sc.id : sc.name;
       if (text.empty()) { ++n; continue; }
+#ifdef MOQI_LITE
+      // Lite 不暴露 T9 九键方案（2026-11-07 用户定稿）；与开关过滤同法，
+      // 索引保持原始序，handleCommand 的 ID→schemas[index] 映射不变。
+      if (sc.id == "rime_frost_t9") { ++n; continue; }
+#endif
       Json::Value it = makeItem(ID_SCHEMA_BASE + n, text);
       setChecked(it, sc.current && !sc.id.empty());
       group["submenu"].append(it);
@@ -265,8 +270,10 @@ Json::Value buildMenu(const MenuState& state) {
                                       {147, "深蓝", "#1d4ed8"}};
       appendStrGroup(app, "高亮文字颜色", htx, 3, state.hlTextColor);
     }
+#ifndef MOQI_LITE
     app["submenu"].append(makeSeparator());
     app["submenu"].append(makeItem(ID_APPEARANCE_IMPORT_SKIN, "导入皮肤"));
+#endif
     items.append(app);
   }
 
@@ -321,8 +328,12 @@ Json::Value buildMenu(const MenuState& state) {
   {
     Json::Value group = makeParent("打开文件夹(&O)");
     group["submenu"].append(makeItem(ID_USER_DIR, "用户文件夹"));
+#ifndef MOQI_LITE
+    // Lite 只留用户/日志两个文件夹（2026-11-07 用户定稿）：共享文件夹是
+    // 安装目录方案数据（高级用户用），同步功能已编译剔除。
     group["submenu"].append(makeItem(ID_SHARED_DIR, "共享文件夹"));
     group["submenu"].append(makeItem(ID_SYNC_DIR, "同步文件夹"));
+#endif
     group["submenu"].append(makeItem(ID_LOG_DIR, "日志文件夹"));
     items.append(group);
   }
