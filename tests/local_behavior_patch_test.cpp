@@ -50,6 +50,7 @@ static const char* kProductBody =
     "  translator/sentence_quality_boost: -2\n"
     "  translator/enable_transpose: true\n"
     "  translator/transpose_credibility: -8\n"
+    "  translator/correction_scan_window: 4\n"
     "  translator/enable_deletion: true\n"
     "  translator/deletion_credibility: -8\n"
     "  translator/enable_substitution: true\n"
