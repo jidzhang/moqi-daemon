@@ -48,6 +48,17 @@ std::string toLower(std::string s) {
   return s;
 }
 
+#ifdef MOQI_LITE
+// Lite 开关白名单（2026-11-06 用户定稿）：只暴露四个基础切换；翻译/emoji/
+// 拆分提示/地→煋/固顶等扩展开关不进菜单（引擎侧选项仍在，配置文件可继续
+// 控制）。索引保持原始序（buildMenu 跳过不重排），handleCommand 的
+// ID→state.switches[index] 映射因此不需要变。
+bool liteKeepSwitch(const std::string& name) {
+  return name == "ascii_mode" || name == "full_shape" ||
+         name == "simplification" || name == "ascii_punct";
+}
+#endif
+
 // ---- 外观子菜单：选项表驱动（id 序列与 Go 常量表一致） ----
 
 struct NumOption {
@@ -104,6 +115,12 @@ Json::Value buildMenu(const MenuState& state) {
   // 1) 开关区（save_options 顺序）
   int i = 0;
   for (const auto& sw : state.switches) {
+#ifdef MOQI_LITE
+    if (!liteKeepSwitch(sw.name)) {
+      ++i;
+      continue;
+    }
+#endif
     Json::Value it = makeItem(ID_SWITCH_BASE + i, switchMenuText(sw, state.options.count(sw.name) && state.options.at(sw.name)));
     setChecked(it, state.options.count(sw.name) && state.options.at(sw.name));
     // daemon 专属字段：选项名。64 位客户端的 DLL 据此在本地引擎上直接
@@ -129,10 +146,13 @@ Json::Value buildMenu(const MenuState& state) {
     items.append(group);
   }
 
-  // 3) 置顶短语/简拼/更新/刷新
+  // 3) 置顶短语/简拼/更新/刷新（Lite 只留重新部署：在线更新依赖 git 拉取，
+  // 置顶短语/超级简拼入口按 2026-11-06 用户定稿移除）
+#ifndef MOQI_LITE
   items.append(makeItem(18, "打开置顶短语"));
   items.append(makeItem(19, "打开超级简拼"));
   items.append(makeItem(ID_UPDATE_CONFIG, "在线更新方案"));
+#endif
   items.append(makeItem(ID_DEPLOY, "重新部署方案(&R)"));
   items.append(makeSeparator());
 
@@ -260,12 +280,16 @@ Json::Value buildMenu(const MenuState& state) {
     Json::Value s = makeItem(ID_INPUT_SEMICOLON_SELECT_SECOND, "分号键次选");
     setChecked(s, state.semicolonSecond);
     group["submenu"].append(s);
+#ifndef MOQI_LITE
     // daemon 专属：多数用户找不到 ai_config.json 在哪，就地用记事本打开。
     group["submenu"].append(makeItem(ID_AI_CONFIG, "配置AI助手"));
+#endif
     items.append(group);
   }
 
-  // 8) 同步设置（命令本地实现）
+#ifndef MOQI_LITE
+  // 8) 同步设置（命令本地实现）——Lite 编译期剔除云剪贴板/WebDAV/用户词库
+  // 同步（2026-11-06 用户定稿：配置存在也无代码可执行）。
   {
     Json::Value group = makeParent("同步设置");
     // 云剪贴板与 WebDAV 共用 cloud_clipboard.json（base_url/账号/密码/开关/
@@ -281,7 +305,7 @@ Json::Value buildMenu(const MenuState& state) {
     items.append(group);
   }
 
-  // 9) 维护（launcher 执行，回执在本地）
+  // 9) 维护（launcher 执行，回执在本地）——Lite 按用户定稿整组移除。
   {
     Json::Value group = makeParent("维护");
     Json::Value d = makeItem(ID_LAUNCHER_DEBUG_LOG, "开启调试");
@@ -291,6 +315,7 @@ Json::Value buildMenu(const MenuState& state) {
     group["submenu"].append(makeItem(ID_LAUNCHER_QUIT, "退出引擎"));
     items.append(group);
   }
+#endif
 
   // 10) 打开文件夹
   {
@@ -303,7 +328,9 @@ Json::Value buildMenu(const MenuState& state) {
   }
 
   items.append(makeSeparator());
+#ifndef MOQI_LITE
   items.append(makeItem(ID_HELP_DOCS, "帮助文档"));
+#endif
   items.append(makeItem(ID_DISCUSSIONS, "参与讨论"));
   return items;
 }

@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.20)
 project(MoqiDaemon CXX)
 
 # 新系统不一定装了 VC++ x86 运行库；MoqiDaemon 是整包里唯一动态链接 CRT
@@ -27,14 +27,15 @@ add_subdirectory("${MOQI_WIN_DIR}/jsoncpp" jsoncpp EXCLUDE_FROM_ALL)
 # add_test 生效前提（此前漏了，ctest 报 No tests were found）。
 enable_testing()
 
-add_executable(MoqiDaemon
+# Lite 版编译期裁剪（2026-11-06 用户定稿）：剔除 AI/云剪贴板/WebDAV/剪贴板
+# 监视四个模块——配置文件存在也没有任何代码消费它。全量版默认 OFF 零变化。
+option(MOQI_LITE "Lite edition: compile out AI/cloud-clipboard/WebDAV" OFF)
+if(MOQI_LITE)
+  add_compile_definitions(MOQI_LITE)
+endif()
+
+set(DAEMON_MAIN_SOURCES
   src/main.cpp
-  src/ClipboardMonitor.cpp
-  src/ClipboardMonitor.h
-  src/DaemonAI.cpp
-  src/DaemonAI.h
-  src/DaemonCloudConfig.cpp
-  src/DaemonCloudConfig.h
   src/DaemonEngine.cpp
   src/DaemonEngine.h
   src/DaemonMaintenance.cpp
@@ -43,8 +44,6 @@ add_executable(MoqiDaemon
   src/DaemonMenuCore.h
   src/DaemonMenuService.cpp
   src/DaemonMenuService.h
-  src/DaemonWebDAV.cpp
-  src/DaemonWebDAV.h
   src/PipeServe.cpp
   src/PipeServe.h
   src/MoqiDaemon.rc
@@ -54,13 +53,40 @@ add_executable(MoqiDaemon
   "${TS_DIR}/LocalRerank.h"
   "${MOQI_WIN_DIR}/libIME2/src/DebugLogConfig.cpp"
 )
+if(NOT MOQI_LITE)
+  list(APPEND DAEMON_MAIN_SOURCES
+    src/ClipboardMonitor.cpp
+    src/ClipboardMonitor.h
+    src/DaemonAI.cpp
+    src/DaemonAI.h
+    src/DaemonCloudConfig.cpp
+    src/DaemonCloudConfig.h
+    src/DaemonWebDAV.cpp
+    src/DaemonWebDAV.h
+  )
+else()
+  list(APPEND DAEMON_MAIN_SOURCES src/DaemonLiteStubs.cpp)
+endif()
 
-# 5e WebDAV 纯函数回归（守卫/命名/MD5/解析，不碰网络）。
+add_executable(MoqiDaemon ${DAEMON_MAIN_SOURCES})
+
+# 5e WebDAV 纯函数回归（守卫/命名/MD5/解析，不碰网络）。Lite 构建无该源。
+# Lite 菜单裁剪契约测试（仅 MOQI_LITE 构建；全量金样测试只在全量构建）。
+if(MOQI_LITE)
+add_executable(lite_menu_test tests/lite_menu_test.cpp src/DaemonMenuCore.cpp)
+target_include_directories(lite_menu_test PRIVATE src "${TS_DIR}"
+  "${MOQI_WIN_DIR}" "${MOQI_WIN_DIR}/jsoncpp/include")
+target_link_libraries(lite_menu_test jsoncpp_static)
+add_test(NAME lite_menu_test COMMAND lite_menu_test)
+endif()
+
+if(NOT MOQI_LITE)
 add_executable(webdav_guard_test tests/webdav_guard_test.cpp src/DaemonWebDAV.cpp)
 target_include_directories(webdav_guard_test PRIVATE src "${TS_DIR}"
   "${MOQI_WIN_DIR}" "${MOQI_WIN_DIR}/jsoncpp/include")
 target_link_libraries(webdav_guard_test winhttp advapi32)
 add_test(NAME webdav_guard_test COMMAND webdav_guard_test)
+endif()
 
 # 后台常驻进程：GUI 子系统，绝不弹控制台窗口（2026-11-02 用户实报黑框）。
 # stdio 模式仍可用：启动器/Daemon 由父进程显式传入管道句柄，无需控制台。
@@ -70,6 +96,7 @@ set_target_properties(MoqiDaemon PROPERTIES LINK_FLAGS "/ENTRY:mainCRTStartup")
 
 # 5b 菜单纯核心回归测试：黄金树 = tests/fixtures/menu_golden.json
 #（从 Go 后端实链抓取），行为先行锁定再实现。
+if(NOT MOQI_LITE)
 add_executable(daemon_menu_test tests/daemon_menu_test.cpp src/DaemonMenuCore.cpp)
 target_include_directories(daemon_menu_test PRIVATE src)
 target_compile_definitions(daemon_menu_test PRIVATE
@@ -84,6 +111,7 @@ add_executable(daemon_menu_dispatch_test tests/daemon_menu_dispatch_test.cpp
 target_include_directories(daemon_menu_dispatch_test PRIVATE src)
 target_link_libraries(daemon_menu_dispatch_test jsoncpp_static)
 add_test(NAME daemon_menu_dispatch_test COMMAND daemon_menu_dispatch_test)
+endif()
 
 # 数字/句点原生直通（bug#20）纯逻辑回归：T9 方案识别 + alphabet 数字识别。
 # 判错后果：T9 打不了字 / Word 丢句点复活。头文件即被测物，无需链接库。
