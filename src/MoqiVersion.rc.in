@@ -1,0 +1,37 @@
+// MoqiDaemon version resource (no icon here: MoqiDaemon.rc owns the icon and
+// stays in src/ so its relative path resolves). UTF-8 no BOM + pragma 65001 --
+// the exact proven pattern of MoqiTextService.rc.in (whose Chinese strings
+// compile correctly). Placeholders filled by configure_file from the outer
+// repo's version.txt (moqi-im-windows root), parsed in CMakeLists.txt.
+#pragma code_page(65001)
+
+#include <winresrc.h>
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION @MOQI_VERSION_MAJOR@,@MOQI_VERSION_MINOR@,@MOQI_VERSION_PATCH@,0
+ PRODUCTVERSION @MOQI_VERSION_MAJOR@,@MOQI_VERSION_MINOR@,@MOQI_VERSION_PATCH@,0
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404b0"
+        BEGIN
+            VALUE "CompanyName", "Moqi"
+            VALUE "FileDescription", "墨奇输入法引擎"
+            VALUE "FileVersion", "@MOQI_VERSION_MAJOR@.@MOQI_VERSION_MINOR@.@MOQI_VERSION_PATCH@"
+            VALUE "InternalName", "MoqiDaemon.exe"
+            VALUE "LegalCopyright", "Copyright (C) 2013-2026 Moqi developers"
+            VALUE "OriginalFilename", "MoqiDaemon.exe"
+            VALUE "ProductName", "墨奇输入法"
+            VALUE "ProductVersion", "@MOQI_VERSION_MAJOR@.@MOQI_VERSION_MINOR@.@MOQI_VERSION_PATCH@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x804, 1200
+    END
+END

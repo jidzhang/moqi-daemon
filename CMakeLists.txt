@@ -9,6 +9,30 @@ if(POLICY CMP0091)
 endif()
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
+# Version resource: parse the outer repo's version.txt (moqi-im-windows root,
+# written by release packaging / CI from the release tag) into MAJOR/MINOR/PATCH
+# and configure src/MoqiVersion.rc.in. Path derived from this source dir, not
+# MOQI_WIN_DIR (declared further below). Missing or malformed file falls back
+# to 0.0.0 rather than failing standalone daemon test builds.
+set(MOQI_VERSION_FILE "${CMAKE_CURRENT_SOURCE_DIR}/../version.txt")
+set(MOQI_VERSION_MAJOR 0)
+set(MOQI_VERSION_MINOR 0)
+set(MOQI_VERSION_PATCH 0)
+if(EXISTS "${MOQI_VERSION_FILE}")
+  file(READ "${MOQI_VERSION_FILE}" MOQI_VERSION_STRING)
+  string(STRIP "${MOQI_VERSION_STRING}" MOQI_VERSION_STRING)
+  if(MOQI_VERSION_STRING MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)")
+    set(MOQI_VERSION_MAJOR "${CMAKE_MATCH_1}")
+    set(MOQI_VERSION_MINOR "${CMAKE_MATCH_2}")
+    set(MOQI_VERSION_PATCH "${CMAKE_MATCH_3}")
+  endif()
+endif()
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/MoqiVersion.rc.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/MoqiVersion.rc"
+  @ONLY
+)
+
 set(CMAKE_CXX_STANDARD 20)
 add_definitions(/D_UNICODE=1 /DUNICODE=1 /utf-8 /DMOQI_ALLOW_X86_ENGINE)
 
@@ -47,6 +71,7 @@ set(DAEMON_MAIN_SOURCES
   src/PipeServe.cpp
   src/PipeServe.h
   src/MoqiDaemon.rc
+  "${CMAKE_CURRENT_BINARY_DIR}/MoqiVersion.rc"
   "${TS_DIR}/RimeCore.cpp"
   "${TS_DIR}/RimeCore.h"
   "${TS_DIR}/LocalRerank.cpp"
