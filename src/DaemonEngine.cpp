@@ -303,31 +303,38 @@ bool DaemonEngine::refreshPageSize() {
   if (!runtime.rimeGetCurrentSchema(sessionId_, schemaId, sizeof(schemaId))) {
     return false;
   }
-  // 刚创建的会话停在 ".default"：优先用保存的方案，但必须确认它还在当前
-  // 方案列表里——用户换成雾凇等整包后旧的 rime_frost 已不存在，此时回退到
-  // default.yaml 的首个方案（整包兼容）。
+  // 会话重建后的方案恢复（2026-11-08 修正）：librime 新会话报的不是
+  // ".default" 而是 schema_list 首个方案——只认 ".default" 的旧逻辑让
+  // 保存的方案在 daemon 重启后永远轮不到（appearance_config.json 的
+  // current_schema_id 写了 wubi、打字仍是拼音，实测）。新规则：保存值
+  // 非空、与当前不同、且仍在方案列表里（雾凇整包后旧 id 失效的兼容门）
+  // → 恢复保存值；菜单切换本身会同步保存值，用户显式选择不会被顶掉。
   std::string target;
-  if (schemaId[0] != '\0' && schemaId[0] != '.') {
+  const bool currentReal = schemaId[0] != '\0' && schemaId[0] != '.';
+  if (currentReal) {
     target = schemaId;
-  } else {
-    const std::string saved = loadSyncedSchemaId();
-    std::string first;
-    bool savedFound = false;
-    if (runtime.rimeGetSchemaList != nullptr &&
-        runtime.rimeFreeSchemaList != nullptr) {
-      rimeapi::RimeSchemaList list = {};
-      if (runtime.rimeGetSchemaList(&list)) {
-        for (size_t i = 0; i < list.size; ++i) {
-          const char* id = list.list[i].schema_id;
-          if (id == nullptr || id[0] == '\0') continue;
-          if (first.empty()) first = id;
-          if (!saved.empty() && saved == id) savedFound = true;
-        }
-        runtime.rimeFreeSchemaList(&list);
+  }
+  const std::string saved = loadSyncedSchemaId();
+  std::string first;
+  bool savedFound = false;
+  if (runtime.rimeGetSchemaList != nullptr &&
+      runtime.rimeFreeSchemaList != nullptr) {
+    rimeapi::RimeSchemaList list = {};
+    if (runtime.rimeGetSchemaList(&list)) {
+      for (size_t i = 0; i < list.size; ++i) {
+        const char* id = list.list[i].schema_id;
+        if (id == nullptr || id[0] == '\0') continue;
+        if (first.empty()) first = id;
+        if (!saved.empty() && saved == id) savedFound = true;
       }
+      runtime.rimeFreeSchemaList(&list);
     }
+  }
+  if (!currentReal) {
     target = savedFound ? saved : first;
     if (target.empty()) target = saved.empty() ? "rime_frost" : saved;
+  } else if (!saved.empty() && saved != target && savedFound) {
+    target = saved;
   }
   if (runtime.rimeSelectSchema != nullptr) {
     runtime.rimeSelectSchema(sessionId_, target.c_str());

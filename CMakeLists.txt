@@ -135,6 +135,15 @@ target_include_directories(local_behavior_patch_test PRIVATE
 target_link_libraries(local_behavior_patch_test jsoncpp_static)
 add_test(NAME local_behavior_patch_test COMMAND local_behavior_patch_test)
 
+# 托管补丁合并守卫回归（2026-11-08 档位升级事故锚：带 marker 的旧输出
+# 不回并——否则每次 daemon 启动追加一块，旧档 grammar/language 压住新档）。
+add_executable(managed_patch_merge_test tests/managed_patch_merge_test.cpp
+  "${TS_DIR}/RimeCore.cpp" "${TS_DIR}/RimeCore.h")
+target_include_directories(managed_patch_merge_test PRIVATE
+  "${TS_DIR}" "${MOQI_WIN_DIR}" "${MOQI_WIN_DIR}/jsoncpp/include")
+target_link_libraries(managed_patch_merge_test jsoncpp_static)
+add_test(NAME managed_patch_merge_test COMMAND managed_patch_merge_test)
+
 # 重排层纯逻辑回归（UTF-8 工具 + 短窗连贯）。直接影响候选排序正确性。
 # RimeCore.cpp 提供 utf8ToWide/fileMtime（LocalRerank.cpp 的传递依赖）。
 add_executable(local_rerank_test tests/local_rerank_test.cpp
