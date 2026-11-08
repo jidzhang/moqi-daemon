@@ -59,7 +59,8 @@ static const char* kProductBody =
     "  translator/insertion_credibility: -8\n"
     "  translator/typo_second_pass: true\n"
     "  translator/typo_second_pass_max_input_length: 12\n"
-    "  translator/typo_second_pass_insert_after: 5\n";
+    "  translator/typo_second_pass_insert_after: 5\n"
+    "  translator/typo_second_pass_compete_floor: 2\n";
 
 int main() {
   const Json::Value empty = obj("{}");
