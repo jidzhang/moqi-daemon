@@ -459,13 +459,19 @@ struct DispatchLockGuard {
 };
 }  // namespace
 
-void dispatchRequest(const string& payload,
+void dispatchRequest(const string& payload, const string& clientId,
                      const std::function<void(const string&)>& reply) {
   DispatchLockGuard lockGuard(&g_dispatchLock);
   Json::Value req;
-  if (!Proto::parseJsonPayload(payload, req)) {
+  if (!Proto::parseJsonPayload(payload, req) || !req.isObject()) {
     daemonLog(L"bad request frame");
     return;
+  }
+  // 连接级 id 注入解析后的对象（刀一：旧实现在 PipeServe 注入后整帧重
+  // 序列化、这里再解析第二遍——每帧两次解析一次多余序列化，2026-11-08
+  // 性能挖掘 daemon 89.9% JSON 的主要来源之一）。
+  if (!clientId.empty()) {
+    req["clientId"] = clientId;
   }
   const string method = req.get("method", "").asString();
 
@@ -878,10 +884,10 @@ void daemonLogDebugExtern(const wstring& message) { daemonLogDebug(message); }
 
 // PipeServe 线程入口的桥（头文件不掺匿名命名空间细节）。
 namespace Moqi {
-void MoqiServeDispatch(const std::string& payload,
+void MoqiServeDispatch(const std::string& payload, const std::string& clientId,
                        const std::function<void(const std::string&)>& reply) {
   try {
-    dispatchRequest(payload, reply);
+    dispatchRequest(payload, clientId, reply);
   } catch (const std::exception& e) {
     daemonLog(L"[serve] dispatch exception: " +
               wstring(e.what(), e.what() + strlen(e.what())));
@@ -1043,7 +1049,7 @@ int main(int argc, char** argv) {
     frames.append(buf, static_cast<size_t>(got));
     string payload;
     while (frames.nextFrame(payload)) {
-      dispatchRequest(payload, &writeFramedToStdout);
+      dispatchRequest(payload, "", &writeFramedToStdout);
     }
   }
   daemonLog(L"moqi-daemon exit");

@@ -11,7 +11,11 @@
 namespace Moqi {
 
 // main.cpp 提供：单帧请求的完整处理（热路径/菜单/命令/代理 Go）。
-void MoqiServeDispatch(const std::string& payload,
+// clientId 走参数注入（2026-11-08 性能刀一）：旧实现 PipeServe 先 parse
+// 注入 clientId 再整帧重新序列化、dispatchRequest 又 parse 第二遍——每帧
+// 两次解析一次多余序列化。现在 PipeServe 零 JSON，dispatchRequest 只解析
+// 一次并把 clientId 写入解析后的对象，下游 req.get("clientId") 不变。
+void MoqiServeDispatch(const std::string& payload, const std::string& clientId,
                        const std::function<void(const std::string&)>& reply);
 
 class PipeServe {

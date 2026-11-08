@@ -168,16 +168,8 @@ DWORD WINAPI clientThread(LPVOID self) {
     std::string payload;
     while (frames.nextFrame(payload)) {
       try {
-        Json::Value req;
-        if (!Proto::parseJsonPayload(payload, req) || !req.isObject()) {
-          continue;
-        }
-        req["clientId"] = clientId; // 与壳一致：连接级 id 注入每个上行帧
-        Json::StreamWriterBuilder wb;
-        wb["commentStyle"] = "None";
-        wb["indentation"] = "";
-        const std::string withId = Json::writeString(wb, req);
-        MoqiServeDispatch(withId, [pipe, writeLock](const std::string& framed) {
+        MoqiServeDispatch(payload, clientId,
+                          [pipe, writeLock](const std::string& framed) {
           std::lock_guard<std::mutex> wl(*writeLock);
           writeAll(pipe, framed.data(), framed.size());
         });
