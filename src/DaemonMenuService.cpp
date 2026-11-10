@@ -268,7 +268,8 @@ void DaemonMenuService::persistAppearance(const Menu::MenuState& state) {
   if (!cfg.isObject()) cfg = Json::Value(Json::objectValue);
   cfg["candidate_theme"] = state.theme;
   cfg["inline_preedit"] = state.inlinePreedit;
-  // 落盘写「配置原值」（3/5/7/9），不写 min(配置, 总候选) 的生效值——否则
+  // 落盘写「配置原值」（合法档见 isValidCandNum），不写 min(配置, 总候选)
+  // 的生效值——否则
   // 用户把总候选从 7 调到 9 后，每行候选数会永久卡在 7（Go 也写原值）。
   cfg["candidate_per_row"] = state.horizontal ? state.perRowRaw : 0;
   cfg["candidate_count"] = state.candCount;
@@ -453,20 +454,17 @@ Menu::MenuState DaemonMenuService::gather(DaemonEngine& engine) {
   state.inlinePreedit = jsonBoolOf(cfg, "inline_preedit", true);
   {
     // 镜像 Go effectiveCandidatePerRow()：竖排=1；横排=min(配置值, 总候选数)，
-    // 总候选数只认 3/5/7/9，否则 7。竖排配置值 Go 写 1、本实现写 0，都认。
+    // 档位只认 3/5/6/7/8/9（isValidCandNum），否则总数回落 5、每行回落 9。
+    // 竖排配置值 Go 写 1、本实现写 0，都认。
     int perRow = jsonIntOf(cfg, "candidate_per_row", 9);
-    int count = jsonIntOf(cfg, "candidate_count", 7);
-    if (count != 3 && count != 5 && count != 7 && count != 9) count = 7;
+    int count = jsonIntOf(cfg, "candidate_count", 5);
+    if (!Menu::isValidCandNum(count)) count = 5;
     state.candCount = count;
     state.horizontal = perRow > 1;
-    if (state.horizontal &&
-        perRow != 3 && perRow != 5 && perRow != 7 && perRow != 9) {
+    if (state.horizontal && !Menu::isValidCandNum(perRow)) {
       perRow = 9;
     }
-    state.perRowRaw = (perRow == 3 || perRow == 5 || perRow == 7 ||
-                       perRow == 9)
-                          ? perRow
-                          : 9;
+    state.perRowRaw = Menu::isValidCandNum(perRow) ? perRow : 9;
     state.perRow = state.horizontal ? (perRow < count ? perRow : count) : 7;
   }
   state.spacing = jsonIntOf(cfg, "candidate_spacing", 20);
@@ -578,12 +576,9 @@ void DaemonMenuService::applyThemeColors(Menu::MenuState& state) {
       const int perRow = ap["candidate_per_row"].asInt();
       state.horizontal = perRow > 1;
       int count = state.candCount;
-      if (count != 3 && count != 5 && count != 7 && count != 9) count = 7;
+      if (!Menu::isValidCandNum(count)) count = 5;
       if (state.horizontal) {
-        state.perRowRaw = (perRow == 3 || perRow == 5 || perRow == 7 ||
-                           perRow == 9)
-                              ? perRow
-                              : 9;
+        state.perRowRaw = Menu::isValidCandNum(perRow) ? perRow : 9;
         state.perRow = perRow < count ? perRow : count;
       } else {
         state.perRow = 7;

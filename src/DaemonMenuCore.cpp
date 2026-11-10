@@ -99,6 +99,18 @@ void appendStrGroup(Json::Value& parent, const char* title,
   parent["submenu"].append(group);
 }
 
+// 每行候选数/总候选数档位表（2026-11-10 起 3/5/6/7/8/9，去掉 4 的忌讳位）。
+// buildMenu 与 handleCommand 共用；合法档位集合见 isValidCandNum。
+const NumOption kPerRowOptions[] = {
+    {ID_APPEARANCE_PER_ROW_3, 3, "3"}, {180 + 1, 5, "5"},
+    {ID_APPEARANCE_PER_ROW_6, 6, "6"}, {180 + 2, 7, "7"},
+    {ID_APPEARANCE_PER_ROW_8, 8, "8"}, {180 + 3, 9, "9"}};
+
+const NumOption kCandCountOptions[] = {
+    {190, 3, "3"}, {191, 5, "5"},
+    {ID_APPEARANCE_CAND_COUNT_6, 6, "6"}, {192, 7, "7"},
+    {ID_APPEARANCE_CAND_COUNT_8, 8, "8"}, {193, 9, "9"}};
+
 } // namespace
 
 std::string switchMenuText(const MenuSwitchDef& sw, bool enabled) {
@@ -199,11 +211,9 @@ Json::Value buildMenu(const MenuState& state) {
       app["submenu"].append(group);
     }
     {
-      static const NumOption perRow[] = {
-          {ID_APPEARANCE_PER_ROW_3, 3, "3"}, {180 + 1, 5, "5"},
-          {180 + 2, 7, "7"}, {180 + 3, 9, "9"}};
-      appendNumGroup(app, "每行候选数", perRow, 4, state.perRow,
-                     state.horizontal);
+      appendNumGroup(app, "每行候选数", kPerRowOptions,
+                     sizeof(kPerRowOptions) / sizeof(kPerRowOptions[0]),
+                     state.perRow, state.horizontal);
     }
     {
       static const NumOption spacing[] = {
@@ -212,9 +222,9 @@ Json::Value buildMenu(const MenuState& state) {
       appendNumGroup(app, "候选间距", spacing, 6, state.spacing);
     }
     {
-      static const NumOption counts[] = {
-          {190, 3, "3"}, {191, 5, "5"}, {192, 7, "7"}, {193, 9, "9"}};
-      appendNumGroup(app, "总候选数量", counts, 4, state.candCount);
+      appendNumGroup(app, "总候选数量", kCandCountOptions,
+                     sizeof(kCandCountOptions) / sizeof(kCandCountOptions[0]),
+                     state.candCount);
     }
     {
       static const NumOption fonts[] = {
@@ -398,6 +408,13 @@ bool isLocalCommandId(int id) {
   return false;
 }
 
+bool isCandidateCountCommand(int id) {
+  int num = 0;
+  return numCommand(kCandCountOptions,
+                    sizeof(kCandCountOptions) / sizeof(kCandCountOptions[0]),
+                    id, num);
+}
+
 CommandResult handleCommand(int id, MenuState& state) {
   CommandResult r;
   r.action = CmdAction::Proxy;
@@ -478,7 +495,7 @@ CommandResult handleCommand(int id, MenuState& state) {
     if (state.horizontal) {
       // 从竖排切回横排：原值可能已不可用（竖排落盘写 0/1），回落到 9。
       int raw = state.perRowRaw;
-      if (raw != 3 && raw != 5 && raw != 7 && raw != 9) raw = 9;
+      if (!isValidCandNum(raw)) raw = 9;
       state.perRowRaw = raw;
       state.perRow = raw < state.candCount ? raw : state.candCount;
     }
@@ -487,14 +504,9 @@ CommandResult handleCommand(int id, MenuState& state) {
     // 数值/字串外观组
     int num = 0;
     std::string str;
-    static const NumOption perRow[] = {
-        {ID_APPEARANCE_PER_ROW_3, 3, "3"}, {180 + 1, 5, "5"},
-        {180 + 2, 7, "7"}, {180 + 3, 9, "9"}};
     static const NumOption spacing[] = {
         {184, 0, "0"}, {185, 10, "10"}, {186, 20, "20"}, {187, 30, "30"},
         {188, 40, "40"}, {189, 50, "50"}};
-    static const NumOption counts[] = {
-        {190, 3, "3"}, {191, 5, "5"}, {192, 7, "7"}, {193, 9, "9"}};
     static const NumOption fonts[] = {
         {113, 8, "8"}, {114, 10, "10"}, {115, 12, "12"}, {116, 14, "14"},
         {117, 16, "16"}, {118, 18, "18"}, {119, 20, "20"}, {123, 22, "22"},
@@ -530,7 +542,9 @@ CommandResult handleCommand(int id, MenuState& state) {
     // Go 的 onCommand 也是 222 先命中“打开成对符号设置”，字号 24 永远选不中，
     // 此处按同样语义走本地回执）。
     r.customizeUi = Json::Value(Json::objectValue);
-    if (numCommand(perRow, 4, id, num)) {
+    if (numCommand(kPerRowOptions,
+                   sizeof(kPerRowOptions) / sizeof(kPerRowOptions[0]), id,
+                   num)) {
       state.perRow = num;
       state.perRowRaw = num;
       r.customizeUi["candPerRow"] = num;
@@ -539,8 +553,16 @@ CommandResult handleCommand(int id, MenuState& state) {
       state.spacing = num;
       r.customizeUi["candSpacing"] = num;
       local();
-    } else if (numCommand(counts, 4, id, num)) {
+    } else if (numCommand(kCandCountOptions,
+                          sizeof(kCandCountOptions) / sizeof(kCandCountOptions[0]),
+                          id, num)) {
       state.candCount = num;
+      // 每行生效值 = min(每行原值, 总数)，总数变了必须重算；此前漏算，
+      // 响应里下发的 candPerRow 是旧值（7→5→9 后渲染每行 5、菜单勾 9，
+      // 2026-11-10 用户实报）。竖排渲染恒发 1，perRow 不参与。
+      if (state.horizontal) {
+        state.perRow = state.perRowRaw < num ? state.perRowRaw : num;
+      }
       local();
     } else if (numCommand(fonts, 12, id, num)) {
       state.fontPoint = num;

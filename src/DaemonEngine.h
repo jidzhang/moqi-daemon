@@ -130,7 +130,7 @@ private:
   bool refreshPageSize();
 
   rimeapi::SessionId sessionId_ = 0;
-  int candidateCount_ = 7;
+  int candidateCount_ = 5;
   bool semicolonSelectSecond_ = false;
   ULONGLONG lastInitAttempt_ = 0;
   int lastKeyDownCode_ = 0;

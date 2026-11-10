@@ -647,10 +647,11 @@ void dispatchRequest(const string& payload, const string& clientId,
         // 不带（或只带零星键），DLL 收不到就只能等重启——用户实报"很多
         // 选项都需要重启应用才行"。DLL 收到即实时应用。
         resp["customizeUi"] = g_menu->buildCustomizeUi(st);
-        // 总候选数（190-193）：立即改本 daemon 所有引擎会话的 page size
-        //（Go applyCandidateCountConfig 的 SetCandidatePageSize 分支）。
-        // 64 位应用的进程内引擎由 DLL 侧按响应里的 candidateCount 跟随。
-        if (cmdId >= 190 && cmdId <= 193) {
+        // 总候选数命令（190-193 与新增 150/151 档）：立即改本 daemon 所有
+        // 引擎会话的 page size（Go applyCandidateCountConfig 的
+        // SetCandidatePageSize 分支）。64 位应用的进程内引擎由 DLL 侧按
+        // 响应里的 candidateCount 跟随。
+        if (Menu::isCandidateCountCommand(cmdId)) {
           for (auto& kv : g_clients) {
             kv.second.engine.applyCandidateCount(st.candCount);
           }

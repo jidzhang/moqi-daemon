@@ -383,9 +383,25 @@
             "separator": false
           },
           {
+            "id": 148,
+            "text": "6",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
             "id": 182,
             "text": "7",
             "checked": true,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 149,
+            "text": "8",
+            "checked": false,
             "enabled": true,
             "submenu": [],
             "separator": false
@@ -481,9 +497,25 @@
             "separator": false
           },
           {
+            "id": 150,
+            "text": "6",
+            "checked": false,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
             "id": 192,
             "text": "7",
             "checked": true,
+            "enabled": true,
+            "submenu": [],
+            "separator": false
+          },
+          {
+            "id": 151,
+            "text": "8",
+            "checked": false,
             "enabled": true,
             "submenu": [],
             "separator": false

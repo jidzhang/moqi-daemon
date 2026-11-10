@@ -227,8 +227,24 @@ target_include_directories(daemon_engine_desync_test PRIVATE
   "${MOQI_WIN_DIR}/jsoncpp/include")
 target_link_libraries(daemon_engine_desync_test jsoncpp_static)
 add_test(NAME daemon_engine_desync_test COMMAND daemon_engine_desync_test)
-set_tests_properties(daemon_engine_desync_test PROPERTIES
-  ENVIRONMENT "MOQI_PROGRAM_DIR=C:/work/moqi-daemon-full;MOQI_RIME_DLL_DIR=C:/work/moqi-daemon-full;MOQI_USER_DATA_DIR=${CMAKE_CURRENT_BINARY_DIR}/desync-user-data")
+# desync 测试要装好的产品树（moqi-ime 数据布局 + 与测试进程同架构的
+# rime.dll）。产品树只带 x86 rime.dll，所以 x86 构建默认注入安装目录约定
+# （AGENTS 规范 14 允许的例外）真跑；x64 构建默认留空 → 测试内 SKIP
+#（树缺失不是回归）。曾硬编码老机器 C:/work/moqi-daemon-full（内含 x64
+# dll），换机重配后 desync 常红。
+set(MOQI_DESYNC_PROGRAM_DIR "C:/Program Files (x86)/MoqiIM"
+    CACHE PATH "Installed product tree for daemon_engine_desync_test")
+if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+  set(MOQI_DESYNC_RIME_DLL_DIR_DEFAULT "${MOQI_DESYNC_PROGRAM_DIR}")
+else()
+  set(MOQI_DESYNC_RIME_DLL_DIR_DEFAULT "")
+endif()
+set(MOQI_DESYNC_RIME_DLL_DIR "${MOQI_DESYNC_RIME_DLL_DIR_DEFAULT}"
+    CACHE PATH "rime.dll dir matching test arch (empty = skip)")
+if(MOQI_DESYNC_RIME_DLL_DIR)
+  set_tests_properties(daemon_engine_desync_test PROPERTIES
+    ENVIRONMENT "MOQI_PROGRAM_DIR=${MOQI_DESYNC_PROGRAM_DIR};MOQI_RIME_DLL_DIR=${MOQI_DESYNC_RIME_DLL_DIR};MOQI_USER_DATA_DIR=${CMAKE_CURRENT_BINARY_DIR}/desync-user-data")
+endif()
 
 target_include_directories(MoqiDaemon PRIVATE
   src

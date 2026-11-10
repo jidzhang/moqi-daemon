@@ -5,6 +5,7 @@
 #include "DaemonEngine.h"
 
 #include "DaemonCloudConfig.h"
+#include "DaemonMenuCore.h"
 #include "DaemonWebDAV.h"
 #include "DigitPassthrough.h"
 
@@ -1605,14 +1606,14 @@ void DaemonEngine::onActivate() {
       }
     }
   }
-  candidateCount_ = 7;
+  candidateCount_ = 5;
   // 外观/共享状态取值走安全访问器：appearance_config.json 手改坏
   // （数组/键类型不符）曾可让 onActivate 抛异常。
   {
     const Json::Value& cc = jsonMemberOf(cfg, "candidate_count");
     if (cc.isInt()) {
       const int n = cc.asInt();
-      if (n == 3 || n == 5 || n == 7 || n == 9) candidateCount_ = n;
+      if (Menu::isValidCandNum(n)) candidateCount_ = n;
     }
   }
   semicolonSelectSecond_ = jsonBoolOf(cfg, "semicolon_select_second");

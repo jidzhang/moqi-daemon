@@ -5,6 +5,7 @@
 //   - 主题段上界（5000+ 是云/WebDAV，绝不落进主题分支）
 //   - 竖排→横排 perRowRaw 兜底（竖排落盘 0/1，切横排回落 9）
 //   - 每行数/间距/候选数/字体族/注释字号各表全命中
+//   - 档位 3/5/6/7/8/9（2026-11-10 扩档）+ 总数变更重算每行生效值
 //   - 自定义颜色把主题切 custom + 注释色跟随
 //   - 222 号历史冲突（打开成对符号设置，非注释字号 24）
 //   - inlinePreedit / 分号选次 / 成对引号的 customizeUi 载荷
@@ -145,6 +146,59 @@ int main() {
     check(r.ok && s.commentFontFace == "SimSun" &&
               r.customizeUi["candCommentFontName"].asString() == "SimSun",
           "cmd: comment font family SimSun applies");
+    // 2026-11-10：档位扩为 3/5/6/7/8/9——新增 id 148/149（每行 6/8）、
+    // 150/151（总数 6/8）全命中。s 此时 perRowRaw=8（149 号已设）。
+    r = handleCommand(148, s);  // 每行 6
+    check(r.ok && s.perRow == 6 && s.perRowRaw == 6 &&
+              r.customizeUi["candPerRow"].asInt() == 6,
+          "cmd: per-row 6 applies");
+    r = handleCommand(149, s);  // 每行 8
+    check(r.ok && s.perRow == 8 && s.perRowRaw == 8,
+          "cmd: per-row 8 applies");
+    r = handleCommand(150, s);  // 总数 6 → 每行收敛 min(8,6)=6
+    check(r.ok && s.candCount == 6 && s.perRow == 6,
+          "cmd: cand count 6 applies");
+    r = handleCommand(151, s);  // 总数 8 → 每行 min(8,8)=8
+    check(r.ok && s.candCount == 8 && s.perRow == 8,
+          "cmd: cand count 8 applies");
+  }
+
+  // ---- 5b. 总数变更必须重算每行生效值（2026-11-10 用户实报 bug）----
+  {
+    // 复现用户序列 7→5→9：改总数 9 时若不重算 perRow，命令响应下发的
+    // candPerRow 是 stale 的 5，渲染每行 5 而重开菜单勾 9。
+    MenuState s = baseState();
+    s.candCount = 5;
+    s.perRowRaw = 9;
+    s.perRow = 5;
+    CommandResult r = handleCommand(193, s);  // 总数 9
+    check(r.ok && s.candCount == 9 && s.perRow == 9,
+          "cmd: cand count 9 recomputes perRow");
+    // 总数改小同样收敛：min(每行 9, 总数 3) = 3
+    MenuState s2 = baseState();
+    s2.candCount = 9;
+    s2.perRowRaw = 9;
+    s2.perRow = 9;
+    handleCommand(190, s2);  // 总数 3
+    check(s2.candCount == 3 && s2.perRow == 3,
+          "cmd: cand count 3 recomputes perRow");
+  }
+
+  // ---- 5c. 总候选命令判定（main.cpp page-size 即时生效用）----
+  {
+    check(isCandidateCountCommand(190) && isCandidateCountCommand(193) &&
+              isCandidateCountCommand(150) && isCandidateCountCommand(151),
+          "cmd: cand-count ids recognized");
+    check(!isCandidateCountCommand(148) && !isCandidateCountCommand(149) &&
+              !isCandidateCountCommand(182) && !isCandidateCountCommand(999),
+          "cmd: non cand-count ids rejected");
+    check(isValidCandNum(3) && isValidCandNum(5) && isValidCandNum(6) &&
+              isValidCandNum(7) && isValidCandNum(8) && isValidCandNum(9) &&
+              !isValidCandNum(4) && !isValidCandNum(10),
+          "cmd: cand tiers are 3/5/6/7/8/9");
+    // 默认总数=5（2026-11-10 用户拍板，对齐微软/谷歌）
+    MenuState s = baseState();
+    check(s.candCount == 5, "state: default candCount is 5");
   }
 
   // ---- 6. 自定义颜色 → 主题切 custom + 注释色跟随 ----

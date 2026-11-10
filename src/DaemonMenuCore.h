@@ -55,10 +55,17 @@ enum CommandIds {
   ID_APPEARANCE_LAYOUT_HORIZONTAL = 171,
   ID_APPEARANCE_PER_ROW_3 = 180,
   ID_APPEARANCE_PER_ROW_9 = 183,
+  // 6/8 档位（2026-11-10 用户定稿：去掉 4 的忌讳位，档位扩为 3/5/6/7/8/9）。
+  // 用 148-151 空号：仍在外观段 100-225 内（isLocalCommandId 自动覆盖），
+  // 且不落在 main.cpp 曾用 190-193 区间判断总候选命令的范围里。
+  ID_APPEARANCE_PER_ROW_6 = 148,
+  ID_APPEARANCE_PER_ROW_8 = 149,
   ID_APPEARANCE_SPACING_0 = 184,
   ID_APPEARANCE_SPACING_50 = 189,
   ID_APPEARANCE_CAND_COUNT_3 = 190,
   ID_APPEARANCE_CAND_COUNT_9 = 193,
+  ID_APPEARANCE_CAND_COUNT_6 = 150,
+  ID_APPEARANCE_CAND_COUNT_8 = 151,
   ID_APPEARANCE_IMPORT_SKIN = 215,
   ID_SHARED_INPUT_STATE = 210,
   ID_INPUT_AUTO_PAIR_QUOTES = 220,
@@ -101,10 +108,12 @@ struct MenuState {
   bool inlinePreedit = false;
   bool horizontal = true;                // 候选排列
   int perRow = 7;                        // 生效值（min(配置, 总候选)）
-  int perRowRaw = 9;                     // 配置原值（3/5/7/9）——落盘写这个，
-                                         // 否则总候选改大后每行数跟着缩水
+  int perRowRaw = 9;                     // 配置原值（合法档见 isValidCandNum）——
+                                         // 落盘写这个，否则总候选改大后每行数跟着缩水
   int spacing = 20;
-  int candCount = 7;
+  // 总候选缺省 5（2026-11-10 用户拍板：对齐微软/谷歌默认 5；窗口更窄，
+  // 右缘对齐时跳动更小）。
+  int candCount = 5;
   int fontPoint = 14;
   int commentFontPoint = 12;
   std::string fontFace = "Microsoft YaHei UI";
@@ -147,6 +156,15 @@ CommandResult handleCommand(int id, MenuState& state);
 
 // main 循环用：该 id 是否本地接管（不查动态表，只看静态集合）。
 bool isLocalCommandId(int id);
+
+// 总候选数/每行候选数的合法档位（菜单表与配置读取校验共用，改档位只动
+// DaemonMenuCore.cpp 的两张表和这里）。
+inline bool isValidCandNum(int n) {
+  return n == 3 || n == 5 || n == 6 || n == 7 || n == 8 || n == 9;
+}
+
+// main 循环用：该 id 是否总候选数命令（需要即时改各引擎会话 page size）。
+bool isCandidateCountCommand(int id);
 
 } // namespace Menu
 } // namespace Moqi
