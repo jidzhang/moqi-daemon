@@ -366,13 +366,34 @@ void DaemonEngine::applyCandidateCount(int count) {
   std::lock_guard<std::recursive_mutex> lock(runtime.mutex());
   candidateCount_ = count;
   // refreshPageSize 会 rimeSelectSchema 重建 Schema，librime 的 ApplySchema
-  // 会清空 context。别的应用正在组字时不要动它；新值会在下次会话重建/
-  // 组字结束后生效。
+  // 会清空 context。别的应用正在组字时不要动它——置 pending，下一个按键
+  // 入口补做（原实现声称"新值会在下次会话重建/组字结束后生效"但从未补
+  // 做，由小变大就此失效：显示钳制只兜得住变小，兜不住变大）。
   if (sessionId_ != 0) {
     bool ok = false;
     const EngineState state = currentState(&ok);
-    if (ok && !state.composition.empty()) return;
+    if (ok && !state.composition.empty()) {
+      pendingPageSize_ = true;
+      return;
+    }
   }
+  if (!refreshPageSize()) {
+    pendingPageSize_ = true;
+  }
+}
+
+// applyCandidateCount 的补做路径：组字中改总候选数时刷新被跳过，第一个
+// 组字已空的按键入口在这里重建 page size（见 pendingPageSize_ 注释）。
+void DaemonEngine::maybeFlushPendingPageSize() {
+  if (!pendingPageSize_ || sessionId_ == 0) {
+    return;
+  }
+  bool ok = false;
+  const EngineState state = currentState(&ok);
+  if (ok && !state.composition.empty()) {
+    return;  // 仍在组字，继续等
+  }
+  pendingPageSize_ = false;
   refreshPageSize();
 }
 
@@ -1079,6 +1100,9 @@ bool DaemonEngine::filterKeyDown(const KeyEventData& e, Json::Value& resp,
                                  std::function<void(Json::Value)> push) {
   RimeRuntime& runtime = RimeRuntime::instance();
   std::lock_guard<std::recursive_mutex> lock(runtime.mutex());
+  // 组字中改过总候选数：本键处理前补做刷新，空窗重建才能让本次组字
+  // 按新页长出候选（必须在键进引擎之前）。
+  maybeFlushPendingPageSize();
 
   // 5e 云剪贴板列表：激活期间的按键由选择器消费。
   if (cloudClip_.active) {
@@ -1221,6 +1245,8 @@ bool DaemonEngine::filterKeyDown(const KeyEventData& e, Json::Value& resp,
 bool DaemonEngine::onKeyDown(const KeyEventData& e, Json::Value& resp) {
   RimeRuntime& runtime = RimeRuntime::instance();
   std::lock_guard<std::recursive_mutex> lock(runtime.mutex());
+  // 同 filterKeyDown：组字中改数的补做要在键进引擎前完成。
+  maybeFlushPendingPageSize();
 
   // 数字/句点原生直通的下半程（bug#20）：filterKeyDown 已回"未吃"，
   // 这里对同一键也回"未吃"，避免应用原生插入后又被吃回。
@@ -1637,6 +1663,7 @@ void DaemonEngine::onActivate() {
     }
   }
   refreshPageSize();
+  pendingPageSize_ = false;  // 新会话已按 candidateCount_ 建页长
   asciiBefore_ = runtime.rimeGetOption(sessionId_, "ascii_mode") != 0;
   fullBefore_ = runtime.rimeGetOption(sessionId_, "full_shape") != 0;
   asciiKnown_ = true;

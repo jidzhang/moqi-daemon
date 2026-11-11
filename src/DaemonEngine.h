@@ -40,7 +40,10 @@ public:
   // 菜单"总候选数"变更的即时生效：更新计数 + 写 menu/page_size。
   void applyCandidateCount(int count);
   // 方案切换后重写 menu/page_size（新方案默认 9，会和界面候选数不一致）。
-  void applySchemaPageSize() { refreshPageSize(); }
+  void applySchemaPageSize() {
+    refreshPageSize();
+    pendingPageSize_ = false;
+  }
   void setSemicolonSelectSecond(bool enabled) {
     semicolonSelectSecond_ = enabled;
   }
@@ -128,9 +131,15 @@ private:
   bool handleSecondSelectionUp(const KeyEventData& e, Json::Value& resp);
   bool readInputModes(bool* asciiMode, bool* fullShape);
   bool refreshPageSize();
+  // 总候选数变更落在组字中时（候选窗正开着点菜单改数），refreshPageSize
+  // 的 Schema 重建会清空上下文，只能跳过——置 pendingPageSize_，下一个
+  // 按键入口（filterKeyDown/onKeyDown）见组字已空时补做。没有补做的话
+  // "由小变大"永久失效（引擎页长停在旧值，显示侧钳制只帮得了变小）。
+  void maybeFlushPendingPageSize();
 
   rimeapi::SessionId sessionId_ = 0;
   int candidateCount_ = 5;
+  bool pendingPageSize_ = false;
   bool semicolonSelectSecond_ = false;
   ULONGLONG lastInitAttempt_ = 0;
   int lastKeyDownCode_ = 0;
