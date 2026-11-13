@@ -98,6 +98,7 @@ public:
   bool cloudClipLoading() const { return cloudClipLoading_.load(); }
 
 private:
+  friend struct DaemonEngineContractProbe;
   struct EngineState {
     bool ok = false;
     std::string commit;
@@ -125,6 +126,7 @@ private:
   void appendLangStatusChange(Json::Value& resp, bool ascii, bool full);
   void updateTrackedRawInput(const KeyEventData& e, UINT keyCode, UINT charCode, bool backendRet);
   void snapshotRawInputForCommit();
+  void prepareExplicitMemory(int displayedBackendIndex);
   bool handleSecondSelectionFilterDown(const KeyEventData& e, Json::Value& resp);
   bool handleSecondSelectionDown(const KeyEventData& e, Json::Value& resp);
   bool handleSecondSelectionFilterUp(const KeyEventData& e, Json::Value& resp);
@@ -174,7 +176,13 @@ private:
   ContextualCommits contextualCommits_;
   std::string rawInputTracked_;
   std::string rawInputAtCommit_;
+  bool explicitMemoryOnly_ = false; // Opt-in experiment; default unchanged.
+  std::string explicitMemoryRaw_;
+  std::string explicitMemoryText_;
+  bool explicitMemoryPartial_ = false;
   std::vector<int> displayPerm_;
+  int displayedCursor_ = 0;
+  bool displayedCursorOverride_ = false;
   std::vector<BYTE> keyStatesBuf_; // KeyEventData backing store per call
   std::atomic<bool> userDictDirty_{false};
 

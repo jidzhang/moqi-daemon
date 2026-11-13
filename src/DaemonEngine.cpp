@@ -70,7 +70,12 @@ bool DaemonEngine::engineReady() const {
 }
 
 
-DaemonEngine::DaemonEngine() {}
+DaemonEngine::DaemonEngine() {
+  const wchar_t* mode = _wgetenv(L"MOQI_EXPLICIT_MEMORY_ONLY");
+  const wchar_t* isolated = _wgetenv(L"MOQI_USER_DATA_DIR");
+  explicitMemoryOnly_ = isolated && *isolated && mode &&
+                        std::wstring(mode) == L"1";
+}
 DaemonEngine::~DaemonEngine() {
   if (aiWorker_.joinable()) {
     aiWorker_.join();
@@ -259,6 +264,10 @@ bool DaemonEngine::commitAICandidate(int index, Json::Value &resp) {
 }
 
 void DaemonEngine::deactivate() {
+  explicitMemoryRaw_.clear();
+  explicitMemoryText_.clear();
+  explicitMemoryPartial_ = false;
+  TypoMemoryStore::instance().flush();
   // 列表激活状态必须随会话一起清：否则切走再回来，DLL 还停在 RPC 转发
   // 模式而 daemon 侧已经 reset，按键语义两边错位。
   resetCloudClipState();
@@ -442,6 +451,21 @@ DaemonEngine::EngineState DaemonEngine::currentState(bool* engineOk) {
   return state;
 }
 
+void DaemonEngine::prepareExplicitMemory(int displayedBackendIndex) {
+  if (!explicitMemoryOnly_) return;
+  explicitMemoryRaw_.clear();
+  explicitMemoryText_.clear();
+  if (explicitMemoryPartial_ || displayedBackendIndex <= 0 ||
+      displayedBackendIndex >= static_cast<int>(displayPerm_.size())) return;
+  bool ok = false;
+  const EngineState state = currentState(&ok);
+  const int engineIndex = displayPerm_[displayedBackendIndex];
+  if (!ok || engineIndex < 0 ||
+      engineIndex >= static_cast<int>(state.candidates.size())) return;
+  explicitMemoryRaw_ = rawInputTracked_;
+  explicitMemoryText_ = state.candidates[engineIndex].first;
+}
+
 // Port of snapshotRawInputForCommit: 提交类按键前保存 raw 快照（供
 // typo_memory 记录；空格提交时跟踪值即将清零）。
 void DaemonEngine::snapshotRawInputForCommit() {
@@ -524,6 +548,14 @@ bool DaemonEngine::processKey(const KeyEventData& e, bool isUp, bool* ret) {
   const int keycode0 = translateKeyCode(e);
   const int mask = translateModifiers(e, isUp);
   int keycode = keycode0;
+  if (!isUp && explicitMemoryOnly_) {
+    const int selection = mask == 0 && keyComposing_
+        ? (e.keyCode == vkSpace
+               ? (displayedCursorOverride_ ? displayedCursor_ : -1) :
+           (e.keyCode >= '1' && e.keyCode <= '9'
+                ? static_cast<int>(e.keyCode) - '1' : -1)) : -1;
+    prepareExplicitMemory(selection - overlayCustomCount_);
+  }
   // 重排后的索引换算：显示序与引擎序不一致时，空格/数字指向显示位次，
   // 必须换算成引擎索引再发给引擎（否则按 2 选错词——历史实报教训）。
   UINT effKeyCode = e.keyCode;
@@ -533,7 +565,7 @@ bool DaemonEngine::processKey(const KeyEventData& e, bool isUp, bool* ret) {
                          L" permSize=" + to_wstring(displayPerm_.size()));
     int target = -1;
     if (effKeyCode == vkSpace) {
-      target = 0;
+      target = displayedCursor_;
     } else if (effKeyCode >= '1' && effKeyCode <= '9') {
       target = static_cast<int>(effKeyCode) - '1';
     }
@@ -549,7 +581,8 @@ bool DaemonEngine::processKey(const KeyEventData& e, bool isUp, bool* ret) {
       const int engineIdx = displayPerm_[target];
       daemonLogDebugExtern(L"[remap] target=" + to_wstring(target) +
                            L" engineIdx=" + to_wstring(engineIdx));
-      if (engineIdx != target && engineIdx >= 0 &&
+      if (((effKeyCode == vkSpace && displayedCursorOverride_) ||
+           engineIdx != target || overlayCustomCount_ > 0) && engineIdx >= 0 &&
           engineIdx < candidateCount_) {
         effKeyCode = static_cast<UINT>('1') + engineIdx;
         effCharCode = effKeyCode;
@@ -557,6 +590,7 @@ bool DaemonEngine::processKey(const KeyEventData& e, bool isUp, bool* ret) {
       }
     }
   }
+  if (!isUp && !isArrow) displayedCursorOverride_ = false;
   bool backendRet = runtime.rimeProcessKey(sessionId_, keycode, mask) != 0;
 
   if (isArrow && mask == 0 && !beforeState.candidates.empty()) {
@@ -826,6 +860,13 @@ void DaemonEngine::appendLangStatusChange(Json::Value& resp, bool ascii,
 void DaemonEngine::buildResponse(const EngineState& state, bool allowCommit,
                                 Json::Value& resp) {
   const RerankConfig& rerankCfg = RerankData::instance().config();
+  if (allowCommit && state.commit.empty()) {
+    // A segment confirmation is not a completed full-raw learning event.
+    if (!explicitMemoryRaw_.empty() && !state.composition.empty())
+      explicitMemoryPartial_ = true;
+    explicitMemoryRaw_.clear();
+    explicitMemoryText_.clear();
+  }
   if (allowCommit && !state.commit.empty()) {
     resp["commitString"] = state.commit;
     // 数字直通标记（bug#20）：单字符 0-9 置位，其他提交清零；供
@@ -838,7 +879,15 @@ void DaemonEngine::buildResponse(const EngineState& state, bool allowCommit,
     string raw =
         rawInputTracked_.empty() ? rawInputAtCommit_ : rawInputTracked_;
     rawInputAtCommit_.clear();
-    if (!raw.empty()) {
+    if (explicitMemoryOnly_) {
+      if (!explicitMemoryPartial_ && state.composition.empty() &&
+          !explicitMemoryRaw_.empty() &&
+          state.commit == explicitMemoryText_) {
+        TypoMemoryStore::instance().record(explicitMemoryRaw_, state.commit);
+      }
+      explicitMemoryRaw_.clear();
+      explicitMemoryText_.clear();
+    } else if (!raw.empty()) {
       TypoMemoryStore::instance().record(raw, state.commit);
     }
     // AI prompt 的 {{previous_commit}} 来源：Go rememberAICommit 在每次上屏
@@ -852,6 +901,9 @@ void DaemonEngine::buildResponse(const EngineState& state, bool allowCommit,
   }
   Json::Value emptyList(Json::arrayValue);
   if (state.composition.empty()) {
+    displayedCursor_ = 0;
+    displayedCursorOverride_ = false;
+    explicitMemoryPartial_ = false;
     rawInputTracked_.clear();
     displayPerm_.clear();
     overlayCustomCount_ = 0;
@@ -984,19 +1036,43 @@ void DaemonEngine::buildResponse(const EngineState& state, bool allowCommit,
     entries.append(item);
     entryTexts.insert(overlay.superText);
   }
-  for (const auto& cand : cands) {
+  // Build the backend mapping from rows actually displayed. Deduplication
+  // (including duplicates of custom phrases) must not leave stale positions.
+  std::vector<int> emittedPerm;
+  int emittedCursor = -1;
+  for (size_t i = 0; i < cands.size(); ++i) {
+    const auto& cand = cands[i];
     if (!entryTexts.insert(cand.first).second) continue;
     if (candidateCount_ > 0 &&
         static_cast<int>(entries.size()) >= candidateCount_) {
       break;
     }
+    if (static_cast<int>(i) == cursor)
+      emittedCursor = static_cast<int>(emittedPerm.size());
     Json::Value item;
     item["text"] = cand.first;
     if (!cand.second.empty()) {
       item["comment"] = cand.second;
     }
     entries.append(item);
+    emittedPerm.push_back(displayPerm_.empty() ? static_cast<int>(i)
+                                             : displayPerm_[i]);
   }
+  // If the highlighted row was deduplicated, highlight its retained text
+  // rather than falling back to an unrelated first candidate.
+  if (emittedCursor < 0 && cursor >= 0 &&
+      cursor < static_cast<int>(cands.size())) {
+    const std::string& selectedText = cands[cursor].first;
+    const int prefix = static_cast<int>(entries.size() - emittedPerm.size());
+    for (size_t i = 0; i < emittedPerm.size(); ++i) {
+      if (entries[prefix + static_cast<int>(i)]["text"].asString() == selectedText) {
+        emittedCursor = static_cast<int>(i);
+        break;
+      }
+    }
+  }
+  displayPerm_ = std::move(emittedPerm);
+  cursor = emittedCursor;
   resp["candidateEntries"] = entries;
   if (aiState_.active && aiCursor >= 0) {
     // 覆盖层光标是"AI 第几条"，不是引擎高亮；之前被下面的引擎 cursor
@@ -1016,6 +1092,12 @@ void DaemonEngine::buildResponse(const EngineState& state, bool allowCommit,
     }
     resp["candidateCursor"] = cursor;
   }
+  if (displayedCursorOverride_ && !aiState_.active &&
+      overlayCustomCount_ == 0 && displayedCursor_ >= 0 &&
+      displayedCursor_ < static_cast<int>(entries.size())) {
+    resp["candidateCursor"] = displayedCursor_;
+  }
+  displayedCursor_ = resp["candidateCursor"].asInt();
   resp["showCandidates"] = true;
 
   // Select keys follow the backend contract: only announce on change.
@@ -1058,15 +1140,12 @@ bool DaemonEngine::handleSecondSelectionDown(const KeyEventData& e,
     resp["returnValue"] = 1;
     return true;
   }
-  RimeRuntime& runtime = RimeRuntime::instance();
-  if (runtime.rimeSelectCandidateOnCurrentPage(sessionId_, 1)) {
-    bool ok = false;
-    const EngineState after = currentState(&ok);
-    buildResponse(after, true, resp);
-    appendLangStatusChange(resp, after.asciiMode, after.fullShape);
-    resp["returnValue"] = 1;
-    return true;
-  }
+  // The shortcut means the displayed second candidate, not engine index 1.
+  // Keep key-up consumption even though selectCandidate clears its latch.
+  const int consumeCode = secondSelectConsumeKeyUpCode_;
+  const bool selected = selectCandidate(1, resp);
+  secondSelectConsumeKeyUpCode_ = consumeCode;
+  if (selected) return true;
   buildResponse(state, false, resp);
   resp["returnValue"] = 1;
   return true;
@@ -1169,6 +1248,19 @@ bool DaemonEngine::filterKeyDown(const KeyEventData& e, Json::Value& resp,
     return true;
   }
 
+  if ((e.keyCode == vkUp || e.keyCode == vkDown) &&
+      translateModifiers(e, false) == 0 && overlayCustomCount_ == 0 &&
+      !displayPerm_.empty()) {
+    const int delta = e.keyCode == vkUp ? -1 : 1;
+    const int target = (std::max)(0, (std::min)(
+        displayedCursor_ + delta, static_cast<int>(displayPerm_.size()) - 1));
+    if (highlightCandidate(target, resp)) {
+      lastKeyDownRet_ = true;
+      lastKeyDownCode_ = static_cast<int>(e.keyCode);
+      lastKeyUpCode_ = 0;
+      return true;
+    }
+  }
   if (handleSecondSelectionFilterDown(e, resp)) {
     return true;
   }
@@ -1318,38 +1410,23 @@ bool DaemonEngine::onKeyDown(const KeyEventData& e, Json::Value& resp) {
         resp["returnValue"] = 1;
         return true;
       }
-      // 显示序 = [AI 第 1 条, 引擎候选 0..n]。数字 2 起落到引擎第
-      // target-1 位（Go commitBackendOverlayCandidate 同义）；旧实现
-      // 只在 AI 数组里找，越界后吞键。
-      bool engineOk = false;
-      const EngineState before = currentState(&engineOk);
-      if (engineOk && target - 1 < static_cast<int>(before.candidates.size())) {
-        resetAIState();
-        if (runtime.rimeSelectCandidateOnCurrentPage != nullptr &&
-            runtime.rimeSelectCandidateOnCurrentPage(sessionId_, target - 1)) {
-          bool ok = false;
-          const EngineState after = currentState(&ok);
-          buildResponse(after, true, resp);
-          appendLangStatusChange(resp, after.asciiMode, after.fullShape);
-          resp["returnValue"] = 1;
-          return true;
-        }
-      }
+      // Mouse and keyboard share the final display-to-engine mapping.
+      if (selectCandidate(target, resp)) return true;
       resp["returnValue"] = 1;
       return true;
     }
     if (e.keyCode == vkUp || e.keyCode == vkDown) {
       bool engineOk = false;
       const EngineState state = currentState(&engineOk);
-      const int engineCount =
-          engineOk ? static_cast<int>(state.candidates.size()) : 0;
-      std::lock_guard<std::mutex> aiLock(aiResultLock_);
-      const int n = 1 + engineCount;  // AI 第 1 条 + 引擎候选
-      if (e.keyCode == vkUp && aiState_.cursor > 0) {
-        --aiState_.cursor;
-      } else if (e.keyCode == vkDown && aiState_.cursor + 1 < n) {
-        ++aiState_.cursor;
-      }
+      {
+        std::lock_guard<std::mutex> aiLock(aiResultLock_);
+        const int n = 1 + (engineOk ? static_cast<int>(displayPerm_.size()) : 0);
+        if (e.keyCode == vkUp && aiState_.cursor > 0) {
+          --aiState_.cursor;
+        } else if (e.keyCode == vkDown && aiState_.cursor + 1 < n) {
+          ++aiState_.cursor;
+        }
+      } // buildResponse acquires aiResultLock_ itself.
       buildResponse(state, false, resp);
       resp["returnValue"] = 1;
       return true;
@@ -1376,6 +1453,20 @@ bool DaemonEngine::onKeyDown(const KeyEventData& e, Json::Value& resp) {
     resetAIState();
   }
 
+  if ((e.keyCode == vkUp || e.keyCode == vkDown) &&
+      translateModifiers(e, false) == 0 && overlayCustomCount_ == 0 &&
+      !displayPerm_.empty()) {
+    // Navigation was applied in filterKeyDown, before reporting consumption.
+    bool ok = false;
+    const EngineState state = currentState(&ok);
+    if (!ok) return false;
+    const int cursor = displayedCursor_;
+    buildResponse(state, false, resp);
+    displayedCursor_ = cursor;
+    resp["candidateCursor"] = cursor;
+    resp["returnValue"] = 1;
+    return true;
+  }
   if (handleSecondSelectionDown(e, resp)) {
     return true;
   }
@@ -1486,10 +1577,26 @@ bool DaemonEngine::highlightCandidate(int index, Json::Value& resp) {
   }
   RimeRuntime& runtime = RimeRuntime::instance();
   lock_guard<recursive_mutex> lock(runtime.mutex());
-  // Optional export in some rime.dll builds (upstream defines it static);
-  // missing behaves like the Go procAvailable guard: not supported.
-  if (runtime.rimeHighlightCandidateOnCurrentPage == nullptr ||
-      !runtime.rimeHighlightCandidateOnCurrentPage(sessionId_, index)) {
+  // Public indices describe final visible rows. Overlay/AI cursors require
+  // their own handlers; do not accidentally highlight a backend row there.
+  if (aiState_.active || overlayCustomCount_ > 0) return false;
+  if (index >= static_cast<int>(displayPerm_.size())) return false;
+  const int displayIndex = index;
+  index = displayPerm_[index];
+  // Some product DLLs omit the optional highlight export. Keep a local
+  // displayed cursor there; Space resolves it through the same permutation.
+  if (runtime.rimeHighlightCandidateOnCurrentPage == nullptr) {
+    bool ok = false;
+    const EngineState state = currentState(&ok);
+    if (!ok) return false;
+    buildResponse(state, false, resp);
+    displayedCursor_ = displayIndex;
+    displayedCursorOverride_ = true;
+    resp["candidateCursor"] = displayIndex;
+    resp["returnValue"] = 1;
+    return true;
+  }
+  if (!runtime.rimeHighlightCandidateOnCurrentPage(sessionId_, index)) {
     return false;
   }
   bool engineOk = false;
@@ -1500,6 +1607,28 @@ bool DaemonEngine::highlightCandidate(int index, Json::Value& resp) {
 }
 
 bool DaemonEngine::selectCandidate(int index, Json::Value& resp) {
+  explicitMemoryRaw_.clear();
+  explicitMemoryText_.clear();
+  if (aiState_.active) {
+    if (index == 0) return commitAICandidate(0, resp);
+    const int backend = index - 1;
+    if (backend < 0 || backend >= static_cast<int>(displayPerm_.size()))
+      return false;
+    const int engineIndex = displayPerm_[backend];
+    RimeRuntime& rt = RimeRuntime::instance();
+    std::lock_guard<std::recursive_mutex> lock(rt.mutex());
+    bool ok = false;
+    const EngineState before = currentState(&ok);
+    if (!ok || engineIndex < 0 ||
+        engineIndex >= static_cast<int>(before.candidates.size())) return false;
+    resetAIState();
+    if (!rt.rimeSelectCandidateOnCurrentPage(sessionId_, engineIndex)) return false;
+    const EngineState after = currentState(&ok);
+    buildResponse(after, true, resp);
+    appendLangStatusChange(resp, after.asciiMode, after.fullShape);
+    resp["returnValue"] = 1;
+    return true;
+  }
   if (!aiState_.active && overlayCustomCount_ > 0 && index >= 0 &&
       index < overlayCustomCount_) {
     const std::string text = overlayCustomTexts_[index];
@@ -1540,7 +1669,17 @@ bool DaemonEngine::selectCandidate(int index, Json::Value& resp) {
   RimeRuntime& runtime = RimeRuntime::instance();
   std::lock_guard<std::recursive_mutex> lock(runtime.mutex());
   secondSelectConsumeKeyUpCode_ = 0;
+  prepareExplicitMemory(index);
+  // After custom-prefix subtraction, index is a displayed backend position.
+  // Match the keyboard path instead of submitting the pre-rerank candidate.
+  if (!aiState_.active && !displayPerm_.empty()) {
+    if (index >= static_cast<int>(displayPerm_.size())) return false;
+    index = displayPerm_[index];
+    if (index < 0 || index >= 9) return false;
+  }
   if (!runtime.rimeSelectCandidateOnCurrentPage(sessionId_, index)) {
+    explicitMemoryRaw_.clear();
+    explicitMemoryText_.clear();
     return false;
   }
   bool engineOk = false;
@@ -1587,16 +1726,23 @@ bool DaemonEngine::changePage(bool backward, Json::Value& resp) {
   }
   bool engineOk = false;
   const EngineState state = currentState(&engineOk);
+  displayedCursorOverride_ = false;
+  displayedCursor_ = 0;
   buildResponse(state, false, resp);
   resp["returnValue"] = 1;
   return true;
 }
 
 void DaemonEngine::onCompositionTerminated(bool forced) {
+  explicitMemoryRaw_.clear();
+  explicitMemoryText_.clear();
+  explicitMemoryPartial_ = false;
   // 组字被外部终止：AI 覆盖层/在途结果一起作废（Go 同）。
   resetAIState();
   secondSelectConsumeKeyUpCode_ = 0;
   keyComposing_ = false;
+  displayedCursor_ = 0;
+  displayedCursorOverride_ = false;
   rawInputTracked_.clear();
   displayPerm_.clear();
   if (forced) resetCloudClipState();
