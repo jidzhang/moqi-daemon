@@ -9,6 +9,18 @@ if(POLICY CMP0091)
 endif()
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
+# Release 优化：/Gy 函数级链接 + /OPT:REF,ICF 死代码消除/相同 COMDAT 折叠（尺寸）。
+# LTCG 全程序优化默认开：同源 A/B n=4 实测 wall/CPU 约 −8%（大代码量收益实证，
+# 代价体积 +~86KB）；小项目（TSF）无此正收益结论，不启用。PGO 已证每键慢
+# 7-10%（56-交接），不启用。
+option(MOQI_LTCG "LTCG whole-program opt: lower CPU, larger size" ON)
+if(MOQI_LTCG)
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+endif()
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /Gy")
+set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /Gy")
+set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /OPT:REF /OPT:ICF")
+
 # Version resource: parse the outer repo's version.txt (moqi-im-windows root,
 # written by release packaging / CI from the release tag) into MAJOR/MINOR/PATCH
 # and configure src/MoqiVersion.rc.in. Path derived from this source dir, not
