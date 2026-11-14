@@ -264,7 +264,7 @@ bool runFullRedeployImpl(std::string* message) {
     started = runtime.rimeStartMaintenance(1) != 0;
     runtime.rimeJoinMaintenanceThread();
   }
-  if (message) *message = started ? "部署成功，新方案已生效" : "方案部署失败，请稍后再试";
+  if (message) *message = started ? "部署成功，输入方案已生效" : "方案部署失败，请稍后再试";
   return started;
 }
 
