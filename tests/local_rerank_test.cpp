@@ -11,6 +11,8 @@
 
 using Moqi::Cand;
 using Moqi::ContextualCommits;
+using Moqi::RerankConfig;
+using Moqi::RerankData;
 using Moqi::utf8FirstRune;
 using Moqi::utf8RuneCount;
 using Moqi::utf8RuneSuffix;
@@ -70,6 +72,40 @@ int main() {
     std::string tail;
     cc.push("第一条", 0);  // 窗口 0 秒 = 立即过期
     check(!cc.activeTail(0, &tail), "0s window expires immediately");
+  }
+
+  // --- applyMixedPairRerank 覆盖闸门（2026-11-18 混拼首候选事故）---
+  {
+    // zaiwokl 生产实况：字级高频对（在|我 9708）过 floor，旧代码把丢弃
+    // 简拼尾巴的短前缀候选「在我」(2字) 轮转到完整候选「在我看来」(4字)
+    // 之上；闸门后更短的候选不得被提升。
+    RerankConfig cfg;
+    cfg.mixedPair = true;
+    cfg.pairRatio = 999.0;
+    cfg.pairFloor = 300;
+    cfg.pairMaxLen = 4;
+    cfg.pairWordRatio = 1.0;
+    std::unordered_map<std::string, std::unordered_map<std::string, int>> pairs;
+    pairs["在"]["我"] = 9708;
+    pairs["是"]["的"] = 29010;
+    RerankData::instance().injectForTest(cfg, pairs, {});
+    {
+      std::vector<Cand> cands = {{"在我看来", ""}, {"在我看", ""},
+                                 {"在我", ""}, {"在握", ""}};
+      int cursor = 0;
+      const bool changed =
+          Moqi::applyMixedPairRerank("zai wo k l", cands, cursor);
+      check(!changed && cands[0].first == "在我看来",
+            "mixedPair: shorter prefix (在我) must not overtake 在我看来");
+    }
+    {
+      // 原设计场景（shid 同长度候选）必须保持提升。
+      std::vector<Cand> cands = {{"时代", ""}, {"是的", ""}, {"使得", ""}};
+      int cursor = 0;
+      const bool changed = Moqi::applyMixedPairRerank("shid", cands, cursor);
+      check(changed && cands[0].first == "是的",
+            "mixedPair: equal-length promotion (是的) must stay");
+    }
   }
 
   std::printf("\n%d passed, %d failed\n", g_pass, g_failed);
