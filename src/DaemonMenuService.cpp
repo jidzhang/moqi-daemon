@@ -13,6 +13,8 @@
 #include "DaemonEngine.h"
 #include "DaemonMenuCore.h"
 #include "DaemonMenuService.h"
+#include "ForegroundGrant.h"
+#include "OsVersion.h"
 
 // 实现在 main.cpp（同 DaemonEngine/PipeServe 的 extern 约定）。
 namespace Moqi {
@@ -198,8 +200,11 @@ std::string fileToString(const std::wstring& path) {
   return ss.str();
 }
 
+// 从 daemon 拉起外部程序（记事本/浏览器/资源管理器）必须显式放行前台，
+// 否则新窗口会被用户当前应用压住（见 ForegroundGrant.h 的机理说明）。
 void shellOpen(const std::wstring& target, bool isUrl) {
   if (target.empty()) return;
+  ForegroundGrant grant;
   ::ShellExecuteW(nullptr, L"open", target.c_str(), nullptr, nullptr,
                   SW_SHOWNORMAL);
 }
@@ -232,6 +237,7 @@ void openTextInBundledEditor(const std::wstring& installRoot,
   }
   if (!editor.empty()) {
     const std::wstring args = L"\"" + file + L"\"";
+    ForegroundGrant grant;
     ::ShellExecuteW(nullptr, L"open", editor.c_str(), args.c_str(), nullptr,
                     SW_SHOWNORMAL);
     return;
@@ -287,6 +293,7 @@ void DaemonMenuService::persistAppearance(const Menu::MenuState& state) {
   cfg["input_state_shared"] = state.inputStateShared;
   cfg["auto_pair_quotes"] = state.autoPairQuotes;
   cfg["semicolon_select_second"] = state.semicolonSecond;
+  cfg["toolbar_enabled"] = state.toolbarEnabled;
   // 一次性迁移标记：存量配置里的 "Segoe UI" 是 Go 时代默认值（无 CJK
   // 字形，GDI 回退宋体），gather 会改成雅黑；但菜单里仍允许手动选回
   // Segoe UI，没有标记的话用户选了也会被再次迁移掉。
@@ -365,6 +372,45 @@ std::vector<ThemeDefinition> DaemonMenuService::loadThemes() {
   return out;
 }
 
+namespace {
+
+// 菜单文案里是否含补充平面字符（UTF-8 四字节序列，码点 > 0xFFFF）。
+// Win7 的 GDI 菜单字体（Segoe UI / 宋体）没有这些字形，💀 之类会显示成
+// 两个方块（2026-11-20 用户 Win7 实报"第五个是表情符号，显示为两个方块"）。
+bool hasNonBmpChar(const std::string& s) {
+  for (size_t i = 0; i < s.size();) {
+    const unsigned char c = static_cast<unsigned char>(s[i]);
+    if ((c & 0xF8) == 0xF0) return true;  // 4 字节 UTF-8 = 补充平面
+    if ((c & 0x80) == 0) {
+      ++i;
+    } else if ((c & 0xE0) == 0xC0) {
+      i += 2;
+    } else if ((c & 0xF0) == 0xE0) {
+      i += 3;
+    } else {
+      ++i;
+    }
+  }
+  return false;
+}
+
+// Win7 上把画不出来的开关文案换成文字。只在 Win7 生效：Win8+ 字体有
+// emoji 字形，保持原样的图形文案（不改用户看惯的样子）。
+void fixUnrenderableStates(Menu::MenuSwitchDef& def) {
+  if (Moqi::osIsWin8Plus()) return;
+  static const char* kEmojiStates[] = {"表情关", "表情开"};
+  for (size_t i = 0; i < def.states.size(); ++i) {
+    if (!hasNonBmpChar(def.states[i])) continue;
+    if (def.name == "emoji" && i < 2) {
+      def.states[i] = kEmojiStates[i];
+    } else {
+      def.states[i] = i == 0 ? "关" : "开";
+    }
+  }
+}
+
+}  // namespace
+
 std::vector<Menu::MenuSwitchDef> DaemonMenuService::loadSwitchDefs(
     DaemonEngine& engine) {
   // 顺序 = default.yaml 的 save_options；states 来自当前 schema yaml 的
@@ -390,6 +436,7 @@ std::vector<Menu::MenuSwitchDef> DaemonMenuService::loadSwitchDefs(
         Menu::MenuSwitchDef d;
         d.name = sw.name;
         d.states = sw.states;
+        fixUnrenderableStates(d);
         defs.push_back(d);
         break;
       }
@@ -496,6 +543,10 @@ Menu::MenuState DaemonMenuService::gather(DaemonEngine& engine) {
   state.autoPairQuotes = jsonBoolOf(cfg, "auto_pair_quotes");
   state.semicolonSecond =
       jsonBoolOf(cfg, "semicolon_select_second");
+  // 工具栏缺省随系统（与 main.cpp 启动时同一口径）：Win7 默认开，
+  // Win8+ 默认关。配置文件里显式写了就听配置。
+  state.toolbarEnabled =
+      jsonBoolOf(cfg, "toolbar_enabled", !osIsWin8Plus());
 
   // 云剪贴板 / 启动器调试
   Json::Value cloud = readJsonFile(root + L"\\cloud_clipboard.json");

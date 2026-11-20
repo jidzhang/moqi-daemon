@@ -37,6 +37,10 @@ public:
   // 命令响应附中英/全半角图标刷新（changeButton；开关类 ON_COMMAND 用，
   // 键路径在 filterKeyDown/Up 里已自带）。
   void appendLangStatus(Json::Value& resp);
+  // 语言栏按钮补丁（changeButton 数组）——按给定状态构造，不依赖任何会话。
+  // 工具栏/菜单在 daemon 侧改完选项后广播给所有宿主用（2026-11-20）：
+  // 逐个客户端按会话状态构造会在"会话没建/连接过期"时漏人。
+  static Json::Value makeLangStatusPatch(bool ascii, bool full, bool punct);
   // 菜单"总候选数"变更的即时生效：更新计数 + 写 menu/page_size。
   void applyCandidateCount(int count);
   // 方案切换后重写 menu/page_size（新方案默认 9，会和界面候选数不一致）。
@@ -112,6 +116,9 @@ private:
     std::vector<std::pair<std::string, std::string>> candidates; // text, comment
     bool asciiMode = false;
     bool fullShape = false;
+    // ascii_punct（中英标点）。工具栏要知道它才能实现非对称联动：
+    // 切英文必配英文标点，切中文保留用户选择。
+    bool asciiPunct = false;
   };
 
   bool ensureSession();
@@ -123,8 +130,10 @@ private:
   // 数字/句点原生直通（bug#20）：见 .cpp 注释。返回 true = 已作答。
   bool tryNativeDigitPassthrough(const KeyEventData& e, Json::Value& resp);
   bool schemaUsesDigitInput();
-  void appendLangStatusChange(Json::Value& resp, bool ascii, bool full);
-  void updateTrackedRawInput(const KeyEventData& e, UINT keyCode, UINT charCode, bool backendRet);
+  void appendLangStatusChange(Json::Value& resp, bool ascii, bool full,
+                              bool punct);
+  void updateTrackedRawInput(const KeyEventData& e, UINT keyCode,
+                             UINT charCode, bool backendRet);
   void snapshotRawInputForCommit();
   void prepareExplicitMemory(int displayedBackendIndex);
   bool handleSecondSelectionFilterDown(const KeyEventData& e, Json::Value& resp);
@@ -132,6 +141,8 @@ private:
   bool handleSecondSelectionFilterUp(const KeyEventData& e, Json::Value& resp);
   bool handleSecondSelectionUp(const KeyEventData& e, Json::Value& resp);
   bool readInputModes(bool* asciiMode, bool* fullShape);
+  // 标点状态（ascii_punct）。会话无效时返回 false——调用方据此跳过下发。
+  bool readAsciiPunct();
   bool refreshPageSize();
   // 总候选数变更落在组字中时（候选窗正开着点菜单改数），refreshPageSize
   // 的 Schema 重建会清空上下文，只能跳过——置 pendingPageSize_，下一个
@@ -173,6 +184,10 @@ private:
   bool asciiKnown_ = false;
   bool asciiBefore_ = false;
   bool fullBefore_ = false;
+  // 标点状态也随 changeButton 下发（2026-11-19）：输入工具栏的中英按钮需要
+  // 知道当前标点是中文还是英文，才能实现"切英文必配英文标点、切中文保留
+  // 用户选择"的非对称联动。语言栏本身用它只做去重。
+  bool punctBefore_ = false;
   ContextualCommits contextualCommits_;
   std::string rawInputTracked_;
   std::string rawInputAtCommit_;

@@ -38,6 +38,28 @@ public:
   // TSF 侧 ensureLauncherRunning 会在下一次按键把 daemon 拉起来）。
   void requestStop();
 
+  // 客户端连接断开回调（2026-11-19）。
+  // 失活的权威信号：DLL 在 Deactivate 时会发 onDeactivate 并断管，
+  // 但进程退出/崩溃/管道异常时那条通知永远发不出来，clientId 就永久
+  // 残留在活跃集合里，表现是"切到其他输入法后工具栏不消失"。
+  // 连接断开是无论如何都会发生的事件，用它兜底清理。
+  using ClientGoneCallback = std::function<void(const std::string& clientId)>;
+  void setClientGoneCallback(ClientGoneCallback cb);
+
+  // pid 是否是当前连着的某个客户端宿主进程。
+  // 工具栏据此判断"前台窗口是不是我们自己服务的进程"。
+  bool isProcessIdServed(DWORD pid) const;
+
+  // clientId 是否还有活着的连接（2026-11-20）。
+  // g_clients 会残留已断开进程的条目，给它们构造推送帧纯属浪费；而"活跃
+  // 集合"在宿主重连后会换 id，按它过滤会把正在用的宿主也跳过。管道注册表
+  // 才是准确判据。
+  bool hasClient(const std::string& clientId) const;
+
+  // 遍历所有活着的连接（回调收到 clientId）。广播类通知用它：不必关心
+  // 客户端会话在不在，每个连接都该收到（2026-11-20 语言栏补丁）。
+  void forEachClient(const std::function<void(const std::string&)>& fn) const;
+
   struct Impl; // public：实现文件里的连接线程需要访问
 
 private:

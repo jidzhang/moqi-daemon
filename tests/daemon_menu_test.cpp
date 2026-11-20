@@ -175,6 +175,33 @@ int main() {
       injected = true;
     }
     check(injected, "golden: 输入设置 group found for AI item injection");
+    // 外观段末尾的 daemon 专属"显示工具栏"（id 152，2026-11-19 加）。
+    // 同样按注入处理：fixture 保持 Go 侧抓包原样。
+    {
+      bool toolbarInjected = false;
+      for (auto& top : golden) {
+        if (top.get("text", "").asString() != "外观(&A)") continue;
+        Json::Value tb = Json::Value(Json::objectValue);
+        tb["id"] = ID_APPEARANCE_TOOLBAR;
+        tb["text"] = "显示工具栏";
+        tb["checked"] = state.toolbarEnabled;
+        tb["enabled"] = true;
+        tb["submenu"] = Json::Value(Json::arrayValue);
+        tb["separator"] = false;
+        // 位置跟 buildMenu 一致：紧跟在"行内预编辑"后面。
+        Json::Value& subs = top["submenu"];
+        Json::Value rebuilt(Json::arrayValue);
+        for (const auto& it : subs) {
+          rebuilt.append(it);
+          if (it.get("id", 0).asInt() == ID_APPEARANCE_INLINE_PREEDIT) {
+            rebuilt.append(tb);
+          }
+        }
+        subs = rebuilt;
+        toolbarInjected = true;
+      }
+      check(toolbarInjected, "golden: 外观 group found for toolbar item injection");
+    }
     // 开关区同样带 daemon 专属 "option" 字段（id 序 = state.switches 序）。
     {
       size_t si = 0;
@@ -303,6 +330,18 @@ int main() {
             s7.autoPairQuotes != state.autoPairQuotes &&
             r.customizeUi.isMember("autoPairQuotes"),
         "cmd: auto pair quotes toggles + ui");
+  // 显示工具栏（id 152）：本地翻转 + 菜单勾选跟着变
+  {
+    MenuState sTb = state;
+    CommandResult rTb = handleCommand(ID_APPEARANCE_TOOLBAR, sTb);
+    check(rTb.action == CmdAction::Local && rTb.ok &&
+              sTb.toolbarEnabled != state.toolbarEnabled,
+          "cmd: toolbar toggle is local + flips state");
+    MenuState sTb2 = sTb;
+    handleCommand(ID_APPEARANCE_TOOLBAR, sTb2);
+    check(sTb2.toolbarEnabled == state.toolbarEnabled,
+          "cmd: toolbar toggle flips back");
+  }
 
   // C7. 代理集合：状态必须原样
   MenuState s8 = state;

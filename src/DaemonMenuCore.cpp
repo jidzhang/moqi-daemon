@@ -201,6 +201,13 @@ Json::Value buildMenu(const MenuState& state) {
       app["submenu"].append(it);
     }
     {
+      // 浮动工具栏（屏幕右下角那四个按钮）。Win7 缺语言栏，这是唯一入口，
+      // 所以把它做成可关的——用户不想要也能去掉，关掉后 Win7 自动退回托盘。
+      Json::Value it = makeItem(ID_APPEARANCE_TOOLBAR, "显示工具栏");
+      setChecked(it, state.toolbarEnabled);
+      app["submenu"].append(it);
+    }
+    {
       Json::Value group = makeParent("候选排列");
       Json::Value v = makeItem(ID_APPEARANCE_LAYOUT_VERTICAL, "竖排");
       setChecked(v, !state.horizontal);
@@ -489,6 +496,11 @@ CommandResult handleCommand(int id, MenuState& state) {
     r.customizeUi = Json::Value(Json::objectValue);
     r.customizeUi["inlinePreedit"] = state.inlinePreedit;
     local();
+  } else if (id == ID_APPEARANCE_TOOLBAR) {
+    // 只翻状态；落盘走 persistAppearance（写 appearance_config.json 的
+    // toolbar_enabled），工具栏线程的 mtime 热重载会立即响应，无需重启。
+    state.toolbarEnabled = !state.toolbarEnabled;
+    local();
   } else if (id == ID_APPEARANCE_LAYOUT_VERTICAL ||
              id == ID_APPEARANCE_LAYOUT_HORIZONTAL) {
     state.horizontal = (id == ID_APPEARANCE_LAYOUT_HORIZONTAL);
@@ -499,6 +511,10 @@ CommandResult handleCommand(int id, MenuState& state) {
       state.perRowRaw = raw;
       state.perRow = raw < state.candCount ? raw : state.candCount;
     }
+    // 排列切换会改每行生效值（横排=min(原值,总数)，竖排=1），必须随响应
+    // 下发，否则候选窗留用旧列数（与总数命令同一类漏发，见下方注释）。
+    r.customizeUi = Json::Value(Json::objectValue);
+    r.customizeUi["candPerRow"] = state.horizontal ? state.perRow : 1;
     local();
   } else {
     // 数值/字串外观组
@@ -563,6 +579,11 @@ CommandResult handleCommand(int id, MenuState& state) {
       if (state.horizontal) {
         state.perRow = state.perRowRaw < num ? state.perRowRaw : num;
       }
+      // 2026-11-19 用户实报（Win7 x86）：总数 5→3 正常，3→5 后候选总数
+      // 是 5 但每行仍是 3。重算了 perRow 却没把它下发——DLL 的候选窗只认
+      // candPerRow，收不到就留用旧列数。此处与上面的重算成对补上。
+      r.customizeUi = Json::Value(Json::objectValue);
+      r.customizeUi["candPerRow"] = state.horizontal ? state.perRow : 1;
       local();
     } else if (numCommand(fonts, 12, id, num)) {
       state.fontPoint = num;

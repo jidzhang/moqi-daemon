@@ -48,6 +48,24 @@ configure_file(
 set(CMAKE_CXX_STANDARD 20)
 add_definitions(/D_UNICODE=1 /DUNICODE=1 /utf-8 /DMOQI_ALLOW_X86_ENGINE)
 
+# Windows 7 targeting (2026-11-19). ON by default so the shipped package runs on
+# both Windows 7 SP1 and Windows 10/11 (one package for all supported systems).
+# Standalone daemon builds do not inherit the outer CMakeLists option, so this
+# is a separate switch with the same meaning: ON hides Win8+ APIs at compile
+# time and stamps subsystem 6.01.
+option(MOQI_TARGET_WIN7 "Build for Windows 7 SP1 (NT 6.1): hide Win8+ APIs at compile time" ON)
+if(MOQI_TARGET_WIN7)
+    add_definitions(-D_WIN32_WINNT=0x0601 -DNTDDI_VERSION=0x06010000)
+    # 子系统版本只加在 MoqiDaemon 目标上（见下方的 LINK_FLAGS 追加）：
+    # 全局 CMAKE_EXE_LINKER_FLAGS 会把 WINDOWS 子系统套到控制台单元测试上，
+    # 它们立刻因缺 WinMain 而链接失败（2026-11-19 实测）。
+    set(MOQI_DAEMON_SUBSYSTEM_FLAG "/SUBSYSTEM:WINDOWS,6.01")
+    message(STATUS "MOQI_TARGET_WIN7=ON (daemon): _WIN32_WINNT=0x0601, subsystem 6.01")
+else()
+    add_definitions(-D_WIN32_WINNT=0x0602 -DNTDDI_VERSION=0x06020000)
+    set(MOQI_DAEMON_SUBSYSTEM_FLAG "")
+endif()
+
 # Reuse verified sources from moqi-im-windows (coupling documented in README).
 # Submodule layout (2026-11-05): daemon lives at <moqi-im-windows>/moqi-daemon,
 # so the shared-engine tree is exactly one level up.
@@ -80,6 +98,11 @@ set(DAEMON_MAIN_SOURCES
   src/DaemonMenuCore.h
   src/DaemonMenuService.cpp
   src/DaemonMenuService.h
+  src/DaemonToolbar.cpp
+  src/DaemonToolbar.h
+  src/DaemonTray.cpp
+  src/DaemonTray.h
+  src/ForegroundGrant.h
   src/PipeServe.cpp
   src/PipeServe.h
   src/MoqiDaemon.rc
@@ -129,7 +152,9 @@ endif()
 # stdio 模式仍可用：启动器/Daemon 由父进程显式传入管道句柄，无需控制台。
 set_target_properties(MoqiDaemon PROPERTIES WIN32_EXECUTABLE TRUE)
 # WIN32 子系统但仍用标准 main()：指定 CRT 控制台入口，避免 WinMain 缺失。
-set_target_properties(MoqiDaemon PROPERTIES LINK_FLAGS "/ENTRY:mainCRTStartup")
+# Win7 目标额外钉死子系统版本 6.01（Windows 加载器实际检查的就是这个）。
+set_target_properties(MoqiDaemon PROPERTIES LINK_FLAGS
+  "/ENTRY:mainCRTStartup ${MOQI_DAEMON_SUBSYSTEM_FLAG}")
 
 # 5b 菜单纯核心回归测试：黄金树 = tests/fixtures/menu_golden.json
 #（从 Go 后端实链抓取），行为先行锁定再实现。
@@ -266,4 +291,4 @@ target_include_directories(MoqiDaemon PRIVATE
   "${MOQI_WIN_DIR}/jsoncpp/include"
 )
 
-target_link_libraries(MoqiDaemon jsoncpp_static comdlg32)
+target_link_libraries(MoqiDaemon jsoncpp_static comdlg32 shell32)

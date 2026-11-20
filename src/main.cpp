@@ -10,6 +10,9 @@
 #include "DaemonMaintenance.h"
 #include "DaemonMenuCore.h"
 #include "DaemonMenuService.h"
+#include "DaemonToolbar.h"
+#include "DaemonTray.h"
+#include "OsVersion.h"
 #include "PipeServe.h"
 #include "ProtoFraming.h"
 #include "RimeCore.h"
@@ -28,6 +31,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <set>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -163,6 +167,67 @@ map<string, ClientEntry> g_clients;
 CRITICAL_SECTION g_stdoutLock;
 CRITICAL_SECTION g_dispatchLock;
 DaemonMenuService* g_menu = nullptr;
+// 当前处于激活态的客户端 id 集合（工具栏显隐驱动，见 METHOD_ON_ACTIVATE）。
+std::set<std::string> g_activeClientIds;
+// 最近一次有按键/激活活动的客户端 id。工具栏读状态必须读它——读
+// g_clients.begin() 拿到的是 map 首元素，未必是用户正在打字的那个，
+// 表现就是"按 Shift 切了英文，工具栏还显示中文"（2026-11-19 用户实报）。
+// 空 = 还没有任何活动，回退到 begin()。
+std::string g_lastActiveClientId;
+// 菜单树缓存（2026-11-19）：首次点"墨"要等引擎冷启动（ensureEngine 最长
+// 30 秒），用户实报"卡好几秒"。daemon 启动预热时就把菜单树抓一份存这里，
+// 首次点击直接用，不阻塞 UI。之后每次点击仍实时 gather（引擎已热，
+// 毫秒级），保证勾选状态是最新的。
+Json::Value g_cachedMenuTree(Json::arrayValue);
+std::mutex g_menuTreeMutex;          // 保护 g_cachedMenuTree 的读写
+std::atomic<bool> g_menuTreeReady{false};
+std::atomic<bool> g_menuTreeRefreshing{false};
+
+// 后台刷新菜单树缓存。点击"墨"时只发这条路、不等它，所以点击零延迟。
+// gather() 每次都重读 default.yaml / schema yaml / themes json，文件 IO 就
+// 是那"一秒钟"的来源——它不该出现在点击路径上（2026-11-19 用户实报
+// "即使每次创建菜单也用不了一秒"）。
+void refreshMenuTreeCacheAsync(DaemonEngine* engineOverride) {
+  if (g_menuTreeRefreshing.exchange(true)) return;  // 已有在跑
+  std::thread([engineOverride]() {
+    Json::Value built(Json::arrayValue);
+    if (g_menu != nullptr) {
+      DaemonEngine* eng = engineOverride;
+      DaemonEngine fallback;
+      // g_clients 的增删在分发线程，这里必须持分发锁读（2026-11-20 review
+      // 抓出：原来先无锁挑引擎再进锁，map 并发插入/删除是 UB）。
+      // 锁内 ensureEngine 的冷启动只发生在"还没有任何客户端"的启动预热
+      // 路径（此时没有请求会被卡住）；有客户端时引擎已热，毫秒级。
+      ::EnterCriticalSection(&g_dispatchLock);
+      if (eng == nullptr) {
+        if (g_clients.empty()) {
+          // 还没有客户端：用临时引擎抓一份结构（勾选状态可能不准，但
+          // 菜单项是齐的，足够让用户先看到菜单）。
+          fallback.ensureEngine();
+          fallback.onActivate();
+          eng = &fallback;
+        } else {
+          auto it = g_clients.find(g_lastActiveClientId);
+          eng = &(it != g_clients.end() ? it : g_clients.begin())
+                     ->second.engine;
+          eng->ensureEngine();
+          eng->onActivate();
+        }
+      }
+      built = Menu::buildMenu(g_menu->gather(*eng));
+      ::LeaveCriticalSection(&g_dispatchLock);
+      if (eng == &fallback) fallback.deactivate();
+    }
+    if (built.isArray() && !built.empty()) {
+      {
+        std::lock_guard<std::mutex> lock(g_menuTreeMutex);
+        g_cachedMenuTree = built;
+      }
+      g_menuTreeReady.store(true);
+    }
+    g_menuTreeRefreshing.store(false);
+  }).detach();
+}
 PipeServe* g_serve = nullptr; // 非 nullptr = serve 模式
 
 void writeFramedToStdout(const string& framed) {
@@ -292,6 +357,21 @@ void executeLauncherCommands(int cmdId) {
 void dispatch(const Json::Value& req, Json::Value& resp,
               std::function<void(Json::Value)> push = nullptr) {
   const string method = req.get("method", "").asString();
+
+  // 维护"最近活跃客户端"（工具栏读状态的依据）。
+  //
+  // 之前只在 METHOD_ON_ACTIVATE 里更新，而用户按 Shift 走的是按键方法
+  //（filterKeyDown/onKeyDown），那条路径从不更新它 —— 多客户端时它一直
+  // 指向旧的那个引擎，工具栏读到的永远是旧状态。表现就是
+  // "按了 Shift 打字和标点都变英文了，工具栏界面却看不到变化"
+  //（2026-11-19 用户实报）。这里任何非失活请求都刷新它。
+  if (method != "METHOD_ON_DEACTIVATE" && method != "METHOD_CLOSE") {
+    const std::string reqCid = req.get("clientId", "").asString();
+    if (!reqCid.empty()) {
+      g_lastActiveClientId = reqCid;
+    }
+  }
+
   const Json::Value& keyEvent = req["keyEvent"];
   vector<BYTE> states;
   KeyEventData e;
@@ -333,6 +413,16 @@ void dispatch(const Json::Value& req, Json::Value& resp,
   }
   if (method == "METHOD_ON_ACTIVATE") {
     engine.onActivate();
+    // 工具栏显隐的唯一驱动：只要有客户端激活就显示（用户切到了墨奇），
+    // 全部失活才隐藏。同一 clientId 重复 onActivate 不重复计数——用 clientId
+    // 集合而不是裸计数器，避免切焦点时计数虚高导致永不隐藏。
+    const std::string cid = req.get("clientId", "").asString();
+    if (!cid.empty()) {
+      g_lastActiveClientId = cid;
+      if (g_activeClientIds.insert(cid).second) {
+        Moqi::setToolbarActiveCount(static_cast<int>(g_activeClientIds.size()));
+      }
+    }
     if (g_menu != nullptr) {
       Json::Value act = g_menu->buildActivatePayload(engine);
       for (auto it = act.begin(); it != act.end(); ++it) {
@@ -355,6 +445,10 @@ void dispatch(const Json::Value& req, Json::Value& resp,
   }
   if (method == "METHOD_ON_DEACTIVATE" || method == "METHOD_CLOSE") {
     engine.deactivate();
+    const std::string cidOff = req.get("clientId", "").asString();
+    if (!cidOff.empty() && g_activeClientIds.erase(cidOff) > 0) {
+      Moqi::setToolbarActiveCount(static_cast<int>(g_activeClientIds.size()));
+    }
     // 32 位应用（本引擎）学到的词在主 userdb 里；写回快照 64 位进程才看得到。
     // 反激活 = 用户切走，是安全窗口（RimeSyncUserData 会清全部会话）。
     if (engine.consumeUserDictDirty()) {
@@ -458,6 +552,78 @@ struct DispatchLockGuard {
   CRITICAL_SECTION* cs_;
 };
 }  // namespace
+
+// Win7 没有语言栏，工具栏一旦关掉就再没有入口（用户会锁死在"无法打开菜单"
+// 的状态）。所以"工具栏关 + Win7"时退回托盘图标，菜单从托盘右键出。
+//
+// 启动时和"运行时把工具栏关掉"两条路径共用本函数（2026-11-19 用户要求把
+// 开关挂进外观菜单——之前只有启动分支处理，运行中关掉就再也打不开了）。
+// startTrayIcon 自身幂等（g_running 原子交换守卫）。
+void startTrayFallbackIfWin7() {
+  if (Moqi::osIsWin8Plus()) return;  // Win8+ 有语言栏，不需要托盘
+  Moqi::TrayCallbacks trayCb;
+  trayCb.buildMenuTree = []() -> Json::Value {
+    // 与工具栏同款：只拷缓存、后台异步刷新（2026-11-20）。旧实现直接
+    // ensureEngine + gather——右键托盘要冷启动引擎（秒级），而且不持
+    // 分发锁就遍历 g_clients 是数据竞争。
+    Json::Value snapshot(Json::arrayValue);
+    {
+      std::lock_guard<std::mutex> lock(g_menuTreeMutex);
+      snapshot = g_cachedMenuTree;
+    }
+    refreshMenuTreeCacheAsync(nullptr);
+    return snapshot;
+  };
+  trayCb.executeCommand = [](int commandId) {
+    Json::Value req(Json::objectValue);
+    req["method"] = "METHOD_ON_COMMAND";
+    req["commandId"] = commandId;
+    req["seqNum"] = 0;
+    Json::StreamWriterBuilder wb;
+    wb["commentStyle"] = "None";
+    wb["indentation"] = "";
+    const std::string body = Json::writeString(wb, req);
+    Moqi::MoqiServeDispatch(body, "daemon-tray", [](const std::string&) {});
+  };
+  Moqi::startTrayIcon(std::move(trayCb));
+  daemonLog(L"[tray] enabled (toolbar disabled, Win7 fallback)");
+}
+
+// 把当前中英/全半角/标点状态推给所有已连接的宿主（2026-11-20 用户实报：
+// "点击中字之后语言栏的中没有跟着变成英，只有点击进入编辑框的时候才变"）。
+//
+// 根因是架构性的：语言栏按钮活在各宿主进程的 DLL 里，daemon 直接 rimeSetOption
+// 只改了自己那份会话——DLL 不主动问就永远不知道。Shift 是按键路径，DLL 自己
+// 处理并立刻刷图标；工具栏点击是 daemon 侧动作，没有回包。
+//
+// 所以这里给每个客户端构造一个"只带按钮补丁"的异步帧，由 PipeServe 按
+// clientId 路由到对应管道。DLL 侧看到 langStatusOnly 只刷语言栏，不碰组字/
+// 候选（否则会把用户正在打的字清掉）。
+void broadcastLangBarPatch(bool ascii, bool fullShape, bool asciiPunct) {
+  if (g_serve == nullptr) return;
+  // 补丁按"目标状态"构造，与任何客户端会话无关；发给**每一条活着的连接**。
+  // 之前的做法是按 g_clients 逐个客户端构造（要读它的引擎状态），实测会
+  // 因为"会话没建好/连接已过期"漏掉真正在打字的宿主（frames=1 但日志
+  // 显示多个客户端在线）。
+  Json::Value patch = DaemonEngine::makeLangStatusPatch(ascii, fullShape,
+                                                       asciiPunct);
+  if (!patch.isMember("changeButton")) return;
+  patch["success"] = true;
+  patch["seqNum"] = -1;  // 异步帧：DLL 侧 seq 对不上会走异步队列
+  patch["langStatusOnly"] = true;
+  int sent = 0;
+  g_serve->forEachClient([&](const std::string& id) {
+    Json::Value frame = patch;
+    frame["clientId"] = id;
+    std::string framed;
+    if (Proto::serializeJsonMessage(frame, framed)) {
+      g_serve->routeFrame(framed);
+      ++sent;
+    }
+  });
+  daemonLog(L"[toolbar] langbar patch broadcast to " + std::to_wstring(sent) +
+            L" client(s) ascii=" + std::to_wstring(ascii ? 1 : 0));
+}
 
 void dispatchRequest(const string& payload, const string& clientId,
                      const std::function<void(const string&)>& reply) {
@@ -660,6 +826,19 @@ void dispatchRequest(const string& payload, const string& clientId,
         // 图标——Go 的 toggleOption 响应带 changeButton；此前 daemon 不带，
         // 图标要等下一次按键才更新（用户实报 Notepad4 图标左键"无效"）。
         entry.engine.appendLangStatus(resp);
+        // 同一个开关从某个宿主的菜单切换时，其它宿主的语言栏图标也要跟着变
+        // （广播补丁；请求方自己已经拿到回包，重复应用是无害的幂等操作）。
+        {
+          // 广播要写管道：放在后台线程，绝不占着分发锁写（某个宿主不读
+          // 管道就能把整个 daemon 的所有请求拖死）。
+          const Json::Value st = resp["langStatus"];
+          const bool a = st.get("ascii", false).asBool();
+          const bool f = st.get("fullShape", false).asBool();
+          const bool pt = st.get("asciiPunct", false).asBool();
+          std::thread([a, f, pt]() {
+            broadcastLangBarPatch(a, f, pt);
+          }).detach();
+        }
         resp["clientId"] = req.get("clientId", "");
         string framed;
         if (Proto::serializeJsonMessage(resp, framed)) {
@@ -922,6 +1101,276 @@ int main(int argc, char** argv) {
   // 剪贴板监听线程（配置未启用时挂空，只读不传）。
   startClipboardMonitor();
 
+  // ---- 输入工具栏 / 托盘图标（2026-11-19）----
+  //
+  // 两者的定位差异（用户实测定下的口径）：
+  //   工具栏 = "输入法被切到时显示"，与候选窗无关；常驻浮层，固定在屏幕
+  //            右下角；做在 daemon 里保证单实例（DLL 在每个宿主进程各跑
+  //            一份，做在 DLL 会叠出 N 个重叠窗口）。
+  //   托盘   = 纯功能入口的兜底，只在没有工具栏时才有意义。
+  // 二者互斥：工具栏开了就不挂托盘，避免同一台机器两个入口。
+  //
+  // 默认值：Win7 开工具栏（没有语言栏，没有别的入口）；Win8+ 关工具栏
+  // 且不挂托盘（有语言栏就够）。用户都能在 appearance_config.json 的
+  // "toolbar_enabled" 里覆盖——Win10 想用工具栏也一样能开。
+  //
+  // 版本检测用 RtlGetVersion 而不是 IsWindows8OrGreater：后者来自
+  // VersionHelpers.h，在 _WIN32_WINNT=0x0601 编译目标下不会被定义。
+  {
+    const bool isWin8Plus = Moqi::osIsWin8Plus();
+
+    bool toolbarWanted = !isWin8Plus;
+    const std::wstring cfgRoot = moqiAppDataDir();
+    if (!cfgRoot.empty()) {
+      std::ifstream in(cfgRoot + L"\appearance_config.json", std::ios::binary);
+      if (in) {
+        Json::Value cfg;
+        std::string errs;
+        Json::CharReaderBuilder rb;
+        if (Json::parseFromStream(rb, in, &cfg, &errs) && cfg.isObject() &&
+            cfg["toolbar_enabled"].isBool()) {
+          toolbarWanted = cfg["toolbar_enabled"].asBool();
+        }
+      }
+    }
+
+    // 不管 toolbarWanted 是什么都启动线程：配置可能随时改成"要工具栏"
+    //（用户 2026-11-19 实报 Win10 改了配置不出工具栏——那时只在开关为真时
+    // 才起线程，改配置自然无效）。线程空转只是 250ms 一次 stat + 读三个
+    // option，代价可忽略；不可见时窗口不显示、不占焦点。
+    {
+      Moqi::ToolbarCallbacks tbCb;
+      // 读三项开关当前值。
+      //
+      // 这里**绝对不能用 gather()**：gather 会重读 default.yaml、当前
+      // schema yaml、themes json 和 appearance_config.json，是几百微秒到
+      // 几毫秒的文件 IO；而本函数被工具栏定时器每 250ms 调一次，等于让
+      // daemon 常年背着一份文件扫描，菜单弹出时抢锁抢 IO，用户感受到的就是
+      // "点墨卡好几秒"（2026-11-19 实报两次）。
+      //
+      // 直接读三个 rime option（纯内存查表，微秒级）就够了。
+      tbCb.readState = []() -> Moqi::ToolbarState {
+        Moqi::ToolbarState st;
+        // g_clients 在分发线程里会被插入/删除，后台轮询线程读它必须持锁
+        //（2026-11-20：轮询已经移出界面线程，这里持分发锁只阻塞轮询线程，
+        // 界面线程不再受影响）。锁序与 dispatchRequest 一致：分发锁 -> 引擎锁。
+        ::EnterCriticalSection(&g_dispatchLock);
+        struct Unlock {
+          ~Unlock() { ::LeaveCriticalSection(&g_dispatchLock); }
+        } unlockGuard;
+        if (g_clients.empty()) return st;
+        // 读"最近活跃"的客户端引擎：用户可能在 A 应用里打字而 g_clients
+        // 的首元素是 B 应用（2026-11-19 实报"按 Shift 切英文，工具栏还显示
+        // 中文"）。
+        //
+        // 但 g_lastActiveClientId 可能是**已经断开的**宿主：进程退出后
+        // g_clients 里的条目和这个 id 都还在，工具栏就会读一个死引擎
+        // （2026-11-19 自测实况：探针连接抢走 lastActive 后，点中英按钮
+        // 界面完全没反应）。所以优先在当前激活集合里找。
+        std::string pick;
+        if (!g_lastActiveClientId.empty() &&
+            g_activeClientIds.count(g_lastActiveClientId) > 0) {
+          pick = g_lastActiveClientId;
+        } else if (!g_activeClientIds.empty()) {
+          pick = *g_activeClientIds.begin();
+        }
+        auto it = g_clients.find(pick);
+        auto& engine = (it != g_clients.end() ? it : g_clients.begin())
+                           ->second.engine;
+        const auto sid = engine.sessionId();
+        RimeRuntime& rt = RimeRuntime::instance();
+        if (sid == 0 || rt.rimeGetOption == nullptr) {
+          return st;
+        }
+        st.ascii = rt.rimeGetOption(sid, "ascii_mode") != 0;
+        st.fullShape = rt.rimeGetOption(sid, "full_shape") != 0;
+        st.asciiPunct = rt.rimeGetOption(sid, "ascii_punct") != 0;
+        return st;
+      };
+      tbCb.buildMenuTree = []() -> Json::Value {
+        // 点击路径只做两件事：拷一份缓存返回、投一个后台刷新。
+        // 绝不在这里 gather（那是文件 IO，就是用户感受到的"卡"）。
+        Json::Value snapshot(Json::arrayValue);
+        {
+          std::lock_guard<std::mutex> lock(g_menuTreeMutex);
+          snapshot = g_cachedMenuTree;
+        }
+        // 不在点击路径里触发刷新：后台 gather 会抢 dispatchLock 和引擎锁，
+        // 菜单弹出瞬间正好需要它们，等于自己给自己制造卡顿。缓存在
+        // "命令执行后"和"启动预热"两处刷新，够新鲜了。
+        return snapshot;
+      };
+      tbCb.executeCommand = [](int commandId) {
+        // 四个开关命令**直接作用到所有活跃客户端引擎**（2026-11-19 实测修）：
+        // 此前走 MoqiServeDispatch + 虚拟 clientId "daemon-tray"，只翻了那个
+        // 虚拟客户端的引擎，用户真正在用的宿主引擎毫发无损——表现就是
+        // "点了切英文，按键盘还是汉字"，以及"跟 Shift 不联动"。
+        //
+        // 语义对齐语言栏：切中英/全半角/标点都是"全局一次生效"，所有宿主
+        // 窗口一起变。遍历 g_clients 逐个 setOption 就是这件事。
+        const char* optionName = nullptr;
+        if (commandId == 1) optionName = "ascii_mode";
+        else if (commandId == 3) optionName = "full_shape";
+        else if (commandId == 4) optionName = "ascii_punct";
+
+        if (optionName != nullptr) {
+          // **必须放后台线程**（2026-11-20 用户实报三连："鼠标滑上去变等待
+          // 光标""过了好多秒之后才可以点击""点一下弹无响应"）。下面的
+          // ensureEngine/onActivate 会建 rime 会话、加载词典，秒级；跑在
+          // 工具栏界面线程上就等于把窗口消息循环卡死，系统判定"程序未响应"。
+          std::string name(optionName);
+          // 每条命令一个短命线程：executeLang 会连着发两条（中英 + 标点），
+          // 用"忙就丢弃"的闸门会把第二条吞掉（2026-11-20 实测 busy=1 丢帧）。
+          // 线程们在 g_dispatchLock 上自然串行，代价可忽略。
+          {
+            std::thread([name]() {
+              RimeRuntime& rt = RimeRuntime::instance();
+              // 锁序：分发锁 -> 引擎锁（与 dispatchRequest 一致，避免循环等待）。
+              ::EnterCriticalSection(&g_dispatchLock);
+              {
+                std::lock_guard<std::recursive_mutex> lock(rt.mutex());
+                // 第一步：只把**已存在会话**的客户端的会话补齐；没有会话的
+                // 客户端跳过（它的首次激活会从共享状态拿到当前值）。
+                // 用 onActivate 会重载引擎，几十毫秒到几秒不等，不该每个
+                // 客户端都做一遍。
+                // **只给"最近活跃"的一个客户端建会话**（2026-11-20 用户
+                // Win7/Win10 双机实报"点击后非常长的等待"）：ensureEngine
+                // 会加载词典（秒级），而这里全程持有分发锁——多给一个没
+                // 会话的客户端建会话，所有宿主的按键就多冻结几秒。explorer/
+                // firefox/conhost 这些连过管道的进程都在客户端表里，群发
+                // ensureEngine 等于每次点击都做 N 次冷启动。
+                auto act = g_clients.find(g_lastActiveClientId);
+                if (act != g_clients.end() && g_serve != nullptr &&
+                    g_serve->hasClient(act->first)) {
+                  act->second.engine.ensureEngine();
+                }
+                // 第二步：以"最近活跃客户端"的当前值为基准算目标值，再统一
+                // 设到所有会话。
+                const char* optionName = name.c_str();
+                bool target = false;
+                bool haveBase = false;
+                auto base = g_clients.find(g_lastActiveClientId);
+                if (base != g_clients.end() &&
+                    g_serve != nullptr && g_serve->hasClient(base->first) &&
+                    base->second.engine.sessionId() != 0 &&
+                    rt.rimeGetOption != nullptr) {
+                  target = rt.rimeGetOption(base->second.engine.sessionId(),
+                                            optionName) == 0;
+                  haveBase = true;
+                }
+                if (!haveBase && rt.rimeGetOption != nullptr) {
+                  for (auto& kv : g_clients) {
+                    if (g_serve == nullptr || !g_serve->hasClient(kv.first)) continue;
+                    const auto sid = kv.second.engine.sessionId();
+                    if (sid == 0) continue;
+                    target = rt.rimeGetOption(sid, optionName) == 0;
+                    haveBase = true;
+                    break;
+                  }
+                }
+                if (!haveBase) target = true;  // 全都没有会话：默认切到"开"
+
+                if (rt.rimeSetOption != nullptr) {
+                  for (auto& kv : g_clients) {
+                    if (g_serve == nullptr || !g_serve->hasClient(kv.first)) continue;
+                    const auto sid = kv.second.engine.sessionId();
+                    if (sid == 0) continue;
+                    rt.rimeSetOption(sid, optionName, target ? 1 : 0);
+                  }
+                  // 工具栏快照立即更新（不等下一帧回包）：点完立刻看到字变。
+                  for (auto& kv : g_clients) {
+                    if (g_serve == nullptr || !g_serve->hasClient(kv.first)) continue;
+                    const auto sid = kv.second.engine.sessionId();
+                    if (sid == 0 || rt.rimeGetOption == nullptr) continue;
+                    Moqi::updateToolbarState(
+                        rt.rimeGetOption(sid, "ascii_mode") != 0,
+                        rt.rimeGetOption(sid, "full_shape") != 0,
+                        rt.rimeGetOption(sid, "ascii_punct") != 0);
+                    break;
+                  }
+                }
+              }
+              ::LeaveCriticalSection(&g_dispatchLock);
+              daemonLog(std::wstring(L"[toolbar] toggled ") +
+                        utf8ToWide(name.c_str()));
+              // 通知所有宿主刷新语言栏图标：按钮在各宿主 DLL 里，daemon
+              // 改选项它不会自己知道（用户实报"点了中字语言栏不变"）。
+              {
+                bool a = false, f = false, p = false;
+                {
+                  std::lock_guard<std::recursive_mutex> lock(rt.mutex());
+                  for (auto& kv : g_clients) {
+                    if (g_serve == nullptr || !g_serve->hasClient(kv.first)) continue;
+                    const auto sid = kv.second.engine.sessionId();
+                    if (sid == 0 || rt.rimeGetOption == nullptr) continue;
+                    a = rt.rimeGetOption(sid, "ascii_mode") != 0;
+                    f = rt.rimeGetOption(sid, "full_shape") != 0;
+                    p = rt.rimeGetOption(sid, "ascii_punct") != 0;
+                    break;
+                  }
+                }
+                broadcastLangBarPatch(a, f, p);
+              }
+              Moqi::pokeToolbarState();
+            }).detach();
+          }
+        } else {
+          // 菜单里的其他命令（方案/主题/打开文件等）仍走标准分发路径。
+          Json::Value req(Json::objectValue);
+          req["method"] = "METHOD_ON_COMMAND";
+          req["commandId"] = commandId;
+          req["seqNum"] = 0;
+          Json::StreamWriterBuilder wb;
+          wb["commentStyle"] = "None";
+          wb["indentation"] = "";
+          const std::string body = Json::writeString(wb, req);
+          Moqi::MoqiServeDispatch(body, "daemon-tray", [](const std::string&) {});
+        }
+        Moqi::pokeToolbarState();
+        // 命令改动了状态（开关/方案/外观），缓存立即过期 -> 后台刷新一次，
+        // 用户下次点"墨"看到的勾选就是新的。不在这里同步 gather（会卡）。
+        refreshMenuTreeCacheAsync(nullptr);
+      };
+      // 工具栏开关的运行时联动（互斥规则在运行时也成立）：
+      //   开 → 撤托盘（同一台机器不要两个入口）；
+      //   关 → Win7 退回托盘，否则用户关掉工具栏后再没有菜单入口。
+      tbCb.onEnabledChanged = [](bool enabled) {
+        if (enabled) {
+          Moqi::stopTrayIcon();
+          daemonLog(L"[toolbar] tray icon removed (toolbar enabled at runtime)");
+        } else {
+          startTrayFallbackIfWin7();
+        }
+      };
+      // 显隐权威判定：前台窗口所属进程是否由我们服务。
+      // 切到别的输入法 / 别的应用后前台窗口换人，工具栏立即隐藏。
+      tbCb.isForegroundServed = []() -> bool {
+        if (g_serve == nullptr) return true;  // stdin 模式无管道，不判断
+        HWND fg = ::GetForegroundWindow();
+        if (fg == nullptr) return false;
+        DWORD pid = 0;
+        ::GetWindowThreadProcessId(fg, &pid);
+        if (pid == 0) return false;
+        // 自己的窗口（工具栏/托盘）不算"前台是我们的宿主"——鼠标点工具栏
+        // 时前台会变成它自己，不能因此判定为继续显示。
+        if (pid == ::GetCurrentProcessId()) {
+          // 落回上一个真实前台：工具栏本身 WS_EX_NOACTIVATE 不该抢焦点，
+          // 走到这里说明宿主已切走，按隐藏处理。
+          return false;
+        }
+        return g_serve->isProcessIdServed(pid);
+      };
+      Moqi::startToolbar(std::move(tbCb));
+      Moqi::setToolbarEnabled(toolbarWanted);
+      daemonLog(std::wstring(L"[toolbar] thread started, enabled=") +
+                (toolbarWanted ? L"1" : L"0"));
+    }
+    // 工具栏在跑就不挂托盘（互斥）；工具栏没启用且是 Win7 才退回托盘。
+    if (!toolbarWanted) {
+      startTrayFallbackIfWin7();
+    }
+  }
+
   // 用户词典跨进程合并泵（2026-11-03）：DLL 的 userdbChanged 通知可能因管道
   // 陈旧/重连窗口丢失（实测导出成功但 daemon 无合并日志）。每 15 秒扫一次
   // 主词典 sync 目录 mtime，有新快照就合并并重建各客户端会话，保证"一个应用
@@ -988,6 +1437,18 @@ int main(int argc, char** argv) {
   if (serveMode) {
     static PipeServe serve;
     g_serve = &serve;
+    // 连接断开 -> 清理活跃集合（工具栏失活的兜底信号）。
+    // DLL 在 Deactivate 时会发 onDeactivate 并断管，但进程退出/崩溃时那条
+    // 通知发不出来，clientId 就永久残留 —— 表现是"切到其他输入法后工具栏
+    // 不消失"（2026-11-19 用户实报）。连接断开是必然发生的，用它兜底。
+    serve.setClientGoneCallback([](const std::string& goneId) {
+      if (g_activeClientIds.erase(goneId) > 0) {
+        daemonLog(L"[toolbar] client gone, active=" +
+                  std::to_wstring(g_activeClientIds.size()));
+        Moqi::setToolbarActiveCount(
+            static_cast<int>(g_activeClientIds.size()));
+      }
+    });
     // 先绑管道再后台预热：旧顺序同步 ensureEngine（最长 30 秒）在
     // serve.run() 之前，冷启动时客户端根本连不上管道，首键直落英文。
     // 多实例竞争时只有抢到管道的实例才预热，否则输家也会白建一份引擎。
@@ -998,6 +1459,18 @@ int main(int argc, char** argv) {
       DaemonEngine warm;
       warm.ensureEngine();
       warm.onActivate();
+      // 预热的同时抓一份菜单树缓存：用户第一次点工具栏"墨"字时直接用，
+      // 不用再等 ensureEngine（2026-11-19 实报"第一次点击要卡好几秒"）。
+      // 这个引擎只是临时实例，用完即弃；菜单里的勾选状态以点击时的实时
+      // gather 为准，缓存只顶第一次。
+      // 预热期抓第一份菜单缓存：用户第一次点"墨"时缓存已经在了。
+      refreshMenuTreeCacheAsync(&warm);
+      // 等它落位（最多 5 秒），保证首次点击就有菜单可显示。
+      for (int i = 0; i < 50 && !g_menuTreeReady.load(); ++i) {
+        ::Sleep(100);
+      }
+      daemonLog(L"[serve] menu tree cached ready=" +
+                std::to_wstring(g_menuTreeReady.load() ? 1 : 0));
       warm.deactivate();
       daemonLog(L"[serve] engine warmup done");
     }).detach();
@@ -1008,6 +1481,8 @@ int main(int argc, char** argv) {
     daemonLog(L"moqi-daemon serve exit");
     // 命名空间静态 std::thread 若仍 joinable，析构会 std::terminate：
     // 干净退出必须停监听并断开全局同步指针。
+    Moqi::stopToolbar();
+    Moqi::stopTrayIcon();
     Moqi::stopClipboardMonitor();
     Moqi::setGlobalCloudSync(nullptr);
     return code;
@@ -1054,6 +1529,8 @@ int main(int argc, char** argv) {
     }
   }
   daemonLog(L"moqi-daemon exit");
+  Moqi::stopToolbar();
+  Moqi::stopTrayIcon();
   Moqi::stopClipboardMonitor();
   Moqi::setGlobalCloudSync(nullptr);
   return 0;

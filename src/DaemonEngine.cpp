@@ -6,6 +6,7 @@
 
 #include "DaemonCloudConfig.h"
 #include "DaemonMenuCore.h"
+#include "DaemonToolbar.h"
 #include "DaemonWebDAV.h"
 #include "DigitPassthrough.h"
 
@@ -448,6 +449,7 @@ DaemonEngine::EngineState DaemonEngine::currentState(bool* engineOk) {
   }
   state.asciiMode = runtime.rimeGetOption(sessionId_, "ascii_mode") != 0;
   state.fullShape = runtime.rimeGetOption(sessionId_, "full_shape") != 0;
+  state.asciiPunct = runtime.rimeGetOption(sessionId_, "ascii_punct") != 0;
   return state;
 }
 
@@ -646,6 +648,14 @@ bool DaemonEngine::readInputModes(bool* asciiMode, bool* fullShape) {
   return true;
 }
 
+bool DaemonEngine::readAsciiPunct() {
+  RimeRuntime& runtime = RimeRuntime::instance();
+  if (sessionId_ == 0 || !runtime.rimeFindSession(sessionId_)) {
+    return false;
+  }
+  return runtime.rimeGetOption(sessionId_, "ascii_punct") != 0;
+}
+
 // 数字/句点原生直通（bug#20 结构性修法）。返回 true = 已作答，调用方直接
 // return。规则：
 //   * 只在 filterKeyDown 阶段判（本函数由 filterKeyDown 调用），onKeyDown
@@ -782,25 +792,17 @@ bool DaemonEngine::shouldPassThroughModifierOnKey(const KeyEventData& e,
 void DaemonEngine::appendLangStatus(Json::Value& resp) {
   bool ascii = false;
   bool full = false;
-  if (readInputModes(&ascii, &full)) {
-    appendLangStatusChange(resp, ascii, full);
+  if (!readInputModes(&ascii, &full)) {
+    return;
   }
+  appendLangStatusChange(resp, ascii, full, readAsciiPunct());
 }
 
-void DaemonEngine::appendLangStatusChange(Json::Value& resp, bool ascii,
-                                         bool full) {
-  if (!asciiKnown_) {
-    asciiBefore_ = ascii;
-    fullBefore_ = full;
-    asciiKnown_ = true;
-    return;
-  }
-  if (ascii == asciiBefore_ && full == fullBefore_) {
-    return;
-  }
-  asciiBefore_ = ascii;
-  fullBefore_ = full;
 
+// 按给定状态构造语言栏按钮补丁（changeButton）。原 appendLangStatusChange
+// 里的这段逻辑原样搬出来，供"广播给所有宿主"的路径复用。
+Json::Value DaemonEngine::makeLangStatusPatch(bool ascii, bool full, bool punct) {
+  (void)punct;
   RimeRuntime& runtime = RimeRuntime::instance();
   wstring iconDir = runtime.iconDir();
   auto hasIcons = [](const wstring& dir) {
@@ -827,7 +829,7 @@ void DaemonEngine::appendLangStatusChange(Json::Value& resp, bool ascii,
     }
   }
   if (iconDir.empty()) {
-    return;
+    return Json::Value(Json::objectValue);
   }
   const bool capsOn = (::GetKeyState(VK_CAPITAL) & 1) != 0;
   auto iconPath = [&iconDir](const wchar_t* name) {
@@ -851,7 +853,68 @@ void DaemonEngine::appendLangStatusChange(Json::Value& resp, bool ascii,
   shapeIcon["id"] = "switch-shape";
   shapeIcon["icon"] = iconPath(full ? L"full.ico" : L"half.ico");
   changes.append(shapeIcon);
-  resp["changeButton"] = changes;
+  Json::Value patch(Json::objectValue);
+  patch["changeButton"] = changes;
+  return patch;
+}
+
+void DaemonEngine::appendLangStatusChange(Json::Value& resp, bool ascii,
+                                         bool full, bool punct) {
+  if (!asciiKnown_) {
+    // 首次调用：落基线，同时下发一次状态——工具栏首次显示需要知道当前
+    // 三项开关值，只落基线不发的话工具栏要等到用户第一次切换才有高亮。
+    asciiBefore_ = ascii;
+    fullBefore_ = full;
+    punctBefore_ = punct;
+    asciiKnown_ = true;
+    Json::Value status(Json::objectValue);
+    status["ascii"] = ascii;
+    status["fullShape"] = full;
+    status["asciiPunct"] = punct;
+    resp["langStatus"] = status;
+    // 工具栏快照同步（2026-11-20：工具栏不再自己读引擎）。
+    Moqi::updateToolbarState(ascii, full, punct);
+    return;
+  }
+  if (ascii == asciiBefore_ && full == fullBefore_ && punct == punctBefore_) {
+    return;
+  }
+
+  // 中英切换联动标点：ascii 一变，标点跟着走（用户定调："切到英文后不得
+  // 英文字母加英文标点"，而中文态下允许单独切标点）。
+  //
+  // 必须放在本函数而不是 appendLangStatus：Shift 走 rime 的
+  // ascii_composer.switch_key，按键路径直接调本函数，只有命令路径才经
+  // appendLangStatus——同步逻辑挂在那边等于 Shift 永不生效
+  // （2026-11-19 实锤：Shift 后按钮变英、句号不动）。
+  if (ascii != asciiBefore_ && punct != ascii) {
+    RimeRuntime& runtime = RimeRuntime::instance();
+    std::lock_guard<std::recursive_mutex> lock(runtime.mutex());
+    if (sessionId_ != 0 && runtime.rimeSetOption != nullptr) {
+      runtime.rimeSetOption(sessionId_, "ascii_punct", ascii ? 1 : 0);
+      punct = ascii;
+    }
+  }
+
+  asciiBefore_ = ascii;
+  fullBefore_ = full;
+  punctBefore_ = punct;
+
+  Json::Value patch = makeLangStatusPatch(ascii, full, punct);
+  if (patch.isMember("changeButton")) resp["changeButton"] = patch["changeButton"];
+
+  // 工具栏按钮标签靠这份快照（不自己读引擎，避免撞上 rime 的锁）。
+  Moqi::updateToolbarState(ascii, full, punct);
+
+  // 工具栏需要知道当前标点状态（changeButton 数组只带图标，装不下）。
+  // 三项开关状态单独下发，DLL 侧据此驱动工具栏按钮高亮与非对称联动逻辑。
+  if (resp.isMember("langStatus") == false) {
+    Json::Value status(Json::objectValue);
+    status["ascii"] = ascii;
+    status["fullShape"] = full;
+    status["asciiPunct"] = punct;
+    resp["langStatus"] = status;
+  }
 }
 
 // Port of fillResponseFromBackendState(): commit bookkeeping + rerank
@@ -1326,7 +1389,7 @@ bool DaemonEngine::filterKeyDown(const KeyEventData& e, Json::Value& resp,
     bool ascii = false;
     bool full = false;
     if (readInputModes(&ascii, &full)) {
-      appendLangStatusChange(resp, ascii, full);
+      appendLangStatusChange(resp, ascii, full, readAsciiPunct());
     }
   }
   lastKeyUpCode_ = 0;
@@ -1481,7 +1544,7 @@ bool DaemonEngine::onKeyDown(const KeyEventData& e, Json::Value& resp) {
     return true;
   }
   buildResponse(state, true, resp);
-  appendLangStatusChange(resp, state.asciiMode, state.fullShape);
+  appendLangStatusChange(resp, state.asciiMode, state.fullShape, state.asciiPunct);
   // Go 每次 onKey 后比对四键并落盘；方案内快捷键改 ascii_punct/简繁时
   // 菜单命令路径覆盖不到，这里补捕获。
   syncSharedAfterOptionToggle(sessionId_);
@@ -1524,7 +1587,7 @@ bool DaemonEngine::filterKeyUp(const KeyEventData& e, Json::Value& resp) {
     bool ascii = false;
     bool full = false;
     if (readInputModes(&ascii, &full)) {
-      appendLangStatusChange(resp, ascii, full);
+      appendLangStatusChange(resp, ascii, full, readAsciiPunct());
     }
   } else {
     // Ordinary key releases never reach the engine (sentence-context rule).
@@ -1555,7 +1618,7 @@ bool DaemonEngine::onKeyUp(const KeyEventData& e, Json::Value& resp) {
     return true;
   }
   buildResponse(state, true, resp);
-  appendLangStatusChange(resp, state.asciiMode, state.fullShape);
+  appendLangStatusChange(resp, state.asciiMode, state.fullShape, state.asciiPunct);
   resp["returnValue"] = 1;
   return true;
 }
@@ -1625,7 +1688,7 @@ bool DaemonEngine::selectCandidate(int index, Json::Value& resp) {
     if (!rt.rimeSelectCandidateOnCurrentPage(sessionId_, engineIndex)) return false;
     const EngineState after = currentState(&ok);
     buildResponse(after, true, resp);
-    appendLangStatusChange(resp, after.asciiMode, after.fullShape);
+    appendLangStatusChange(resp, after.asciiMode, after.fullShape, after.asciiPunct);
     resp["returnValue"] = 1;
     return true;
   }
@@ -1685,7 +1748,7 @@ bool DaemonEngine::selectCandidate(int index, Json::Value& resp) {
   bool engineOk = false;
   const EngineState state = currentState(&engineOk);
   buildResponse(state, true, resp);
-  appendLangStatusChange(resp, state.asciiMode, state.fullShape);
+  appendLangStatusChange(resp, state.asciiMode, state.fullShape, state.asciiPunct);
   resp["returnValue"] = 1;
   return true;
 }

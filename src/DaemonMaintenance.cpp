@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "DaemonMaintenance.h"
+#include "ForegroundGrant.h"
 
 namespace Moqi {
 namespace {
@@ -873,6 +874,10 @@ void notifyUserMessage(const std::string& utf8Message, bool error) {
   if (utf8Message.empty()) return;
   std::thread([utf8Message, error]() {
     const std::wstring text = utf8ToWs(utf8Message);
+    // 后台线程弹框，必须放行前台否则会被用户当前窗口压住
+    //（机理见 ForegroundGrant.h）。MB_TOPMOST 只保证层级，拿不到焦点用户
+    // 仍会以为"点了没反应"。
+    ForegroundGrant grant;
     ::MessageBoxW(nullptr, text.c_str(), L"墨奇输入法",
                   MB_OK | (error ? MB_ICONWARNING : MB_ICONINFORMATION) |
                       MB_SETFOREGROUND | MB_TOPMOST);

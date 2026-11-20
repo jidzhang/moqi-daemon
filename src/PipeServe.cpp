@@ -88,6 +88,12 @@ struct PipeServe::Impl {
   std::wstring pipeName;
   HANDLE singleInstance = nullptr;
   std::atomic<bool> ownsPipe{false};
+  // 客户端断开回调（工具栏失活兜底，见 PipeServe.h 说明）。
+  PipeServe::ClientGoneCallback clientGone;
+  // clientId -> 客户端进程 PID。工具栏用它判断"前台窗口是不是我们的宿主"
+  // ——切换输入法时 TSF 不一定调 Deactivate，但前台窗口一定换人，这是
+  // 最可靠的是否该显示的依据（2026-11-19 用户实报两次未解决后补）。
+  std::map<std::string, DWORD> clientPids;
 
   Impl() { ::InitializeCriticalSection(&clientsLock); }
   ~Impl() {
@@ -100,12 +106,21 @@ struct PipeServe::Impl {
   void registerClient(const std::string& id, HANDLE h) {
     ::EnterCriticalSection(&clientsLock);
     clients[id] = h;
+    DWORD pid = 0;
+    ::GetNamedPipeClientProcessId(h, &pid);
+    if (pid != 0) clientPids[id] = pid;
     ::LeaveCriticalSection(&clientsLock);
   }
   void unregisterClient(const std::string& id) {
     ::EnterCriticalSection(&clientsLock);
     clients.erase(id);
+    clientPids.erase(id);
     ::LeaveCriticalSection(&clientsLock);
+    // 连接断开 = 这个客户端不可能再是激活输入法，通知上层清理活跃集合。
+    // 必须在锁外调用：回调可能碰 daemon 的其它全局状态。
+    if (clientGone) {
+      clientGone(id);
+    }
   }
   bool sendTo(const std::string& id, const std::string& framed) {
     HANDLE h = INVALID_HANDLE_VALUE;
@@ -216,6 +231,41 @@ void PipeServe::routeFrame(const std::string& framed) {
     daemonLogExtern(L"[serve] routeFrame: no client for " +
                     std::wstring(clientId.begin(), clientId.end()));
   }
+}
+
+bool PipeServe::isProcessIdServed(DWORD pid) const {
+  bool found = false;
+  ::EnterCriticalSection(&impl_->clientsLock);
+  for (const auto& kv : impl_->clientPids) {
+    if (kv.second == pid) {
+      found = true;
+      break;
+    }
+  }
+  ::LeaveCriticalSection(&impl_->clientsLock);
+  return found;
+}
+
+void PipeServe::forEachClient(
+    const std::function<void(const std::string&)>& fn) const {
+  std::vector<std::string> ids;
+  ::EnterCriticalSection(&impl_->clientsLock);
+  for (const auto& kv : impl_->clients) ids.push_back(kv.first);
+  ::LeaveCriticalSection(&impl_->clientsLock);
+  // 回调在锁外执行：里面会写管道，不能占着注册表锁。
+  for (const auto& id : ids) fn(id);
+}
+
+bool PipeServe::hasClient(const std::string& clientId) const {
+  bool found = false;
+  ::EnterCriticalSection(&impl_->clientsLock);
+  found = impl_->clients.find(clientId) != impl_->clients.end();
+  ::LeaveCriticalSection(&impl_->clientsLock);
+  return found;
+}
+
+void PipeServe::setClientGoneCallback(ClientGoneCallback cb) {
+  impl_->clientGone = std::move(cb);
 }
 
 void PipeServe::requestStop() {

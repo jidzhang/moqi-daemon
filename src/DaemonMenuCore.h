@@ -66,6 +66,9 @@ enum CommandIds {
   ID_APPEARANCE_CAND_COUNT_9 = 193,
   ID_APPEARANCE_CAND_COUNT_6 = 150,
   ID_APPEARANCE_CAND_COUNT_8 = 151,
+  // 显示/隐藏浮动工具栏（2026-11-19 用户要求：开关挂到外观里）。
+  // 152 是外观段 100-225 里的空号，isLocalCommandId 自动覆盖。
+  ID_APPEARANCE_TOOLBAR = 152,
   ID_APPEARANCE_IMPORT_SKIN = 215,
   ID_SHARED_INPUT_STATE = 210,
   ID_INPUT_AUTO_PAIR_QUOTES = 220,
@@ -126,6 +129,9 @@ struct MenuState {
   std::string commentHlColor = "#000000";
 
   bool inputStateShared = false;
+  // 浮动工具栏开关（appearance_config.json 的 toolbar_enabled）。
+  // 缺省值随系统：Win7 默认开（没有语言栏，这是唯一入口），Win8+ 默认关。
+  bool toolbarEnabled = false;
   bool autoPairQuotes = false;
   bool semicolonSecond = false;
   bool cloudEnabled = false;
