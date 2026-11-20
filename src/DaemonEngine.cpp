@@ -1027,6 +1027,10 @@ void DaemonEngine::buildResponse(const EngineState& state, bool allowCommit,
     applyBigramRerank(tail, cands, cursor);
   }
   applyMixedPairRerank(state.composition, cands, cursor);
+  // 整句搭配证据换位（2026-11-20 搭配层两案）：mixedPair 未动时用
+  // bigram 后继表的"有据对数优势"翻罚分(-4)杀不动的固定搭配病句
+  //（这个无比解决→务必解决、随着时间太原→时间推移）。与 Go 侧镜像。
+  applyCollocationRerank(cands, cursor);
   displayPerm_ = buildDisplayPerm(engineOrder, cands);
 
   // 错字记忆提顶：同一 raw 上次选过的词已在候选里则提到第 1 位（仅改
