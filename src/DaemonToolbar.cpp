@@ -12,6 +12,7 @@
 #include <windows.h>
 #include <windowsx.h>
 
+#include "OsVersion.h"
 #include "RimeCore.h"  // moqiAppDataDir
 #include <fstream>
 
@@ -312,13 +313,17 @@ void onPaint(HWND hwnd) {
     HFONT font = nullptr;
     if (::SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0)) {
         ncm.lfMessageFont.lfWeight = FW_NORMAL;
-        ncm.lfMessageFont.lfHeight =
-            ncm.lfMessageFont.lfHeight < 0
-                ? static_cast<LONG>(ncm.lfMessageFont.lfHeight * 1.4)
-                : -20;
-        // 黑体（SimHei）：用户 2026-11-20 定稿"改成用黑体或宋体"——雅黑
-        // 常规体被嫌"不好看"。黑体笔画粗犷清晰，Win7/Win10 都内置。
-        wcsncpy_s(ncm.lfMessageFont.lfFaceName, L"SimHei", _TRUNCATE);
+        // 字号固定像素（2026-11-21 用户实报：Win7 比 Win10 大很多——旧算法
+        // 按系统消息字体 ×1.4，随机器显示缩放 DPI 漂移）。工具栏窗口本身就是
+        // 固定像素（122x35），字号固定 -20 与之自洽，两系统/任何缩放一致；
+        // DPI 不感知进程在高 DPI 屏由系统虚拟化整体拉伸，等比不失配。
+        ncm.lfMessageFont.lfHeight = -20;
+        // 微软雅黑常规体（2026-11-21 用户定稿"都用雅黑，效果一致"）：
+        // Win7 的 SimHei 老版字形有缺陷（"英"草字头横线断裂），且两系统
+        // SimHei 版本不同导致字形不一致；雅黑两系统矢量渲染一致且为小字
+        // 号 ClearType 优化。运行时调用系统字体渲染 UI 不涉分发，合规。
+        wcsncpy_s(ncm.lfMessageFont.lfFaceName, L"Microsoft YaHei",
+                  _TRUNCATE);
         font = ::CreateFontIndirectW(&ncm.lfMessageFont);
     }
     if (font == nullptr) {
