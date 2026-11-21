@@ -178,7 +178,47 @@ int hitTest(POINT pt) {
     return -1;
 }
 
-// 中英按钮：双向联动标点（中->英带英文标点，英->中带中文标点）。
+// ---------- 联动纯逻辑（单测锁定；见 toolbar_plan_test.cpp） ----------
+
+// 工具栏命令 id（与 main.cpp 的 executeCommand 对齐）。
+constexpr int kPlanCmdMode = 1;    // ascii_mode 开关
+constexpr int kPlanCmdPunct = 4;   // ascii_punct 开关
+
+struct ToolbarPlan {
+    bool sendMode;   // 是否发中英开关
+    bool sendPunct;  // 是否发标点开关
+    bool asciiAfter;  // 执行后的 ascii 期望值（本地即时回显）
+    bool punctAfter;  // 执行后的标点期望值
+};
+
+// 点「中/英」按钮的联动计划：切英文必配英文标点、切中文必配中文标点
+//（用户定调"切到英文后不得英文字母加英文标点"；中文态下允许单独切标点，
+// 但中英切换始终把标点带过去）。
+ToolbarPlan planLangToggle(bool ascii, bool punct) {
+    const bool target = !ascii;
+    ToolbarPlan p{};
+    p.sendMode = true;
+    p.sendPunct = (punct != target);
+    p.asciiAfter = target;
+    p.punctAfter = target;
+    return p;
+}
+
+// 点「。/,」按钮的联动计划：切到中文标点时，若当前是英文输入则一并切回
+// 中文（用户定调"从英文标点切换到中文标点需要同步切换到中文输入"）；
+// 英文输入态下切英文标点不动中英；中文态切英文标点也不动中英。
+ToolbarPlan planPunctToggle(bool ascii, bool punct) {
+    const bool target = !punct;
+    ToolbarPlan p{};
+    p.sendPunct = true;
+    p.sendMode = (!target && ascii);  // 回中文标点 && 当前英文 -> 带回中文
+    p.punctAfter = target;
+    p.asciiAfter = p.sendMode ? false : ascii;
+    return p;
+}
+
+// ---------- 执行（消费上面的计划） ----------
+
 void executeLang() {
     bool ascii = false;
     bool punct = false;
@@ -187,18 +227,16 @@ void executeLang() {
         ascii = g_state.ascii;
         punct = g_state.asciiPunct;
     }
-    const bool target = !ascii;
+    const ToolbarPlan plan = planLangToggle(ascii, punct);
     if (g_callbacks.executeCommand) {
-        g_callbacks.executeCommand(kCmdModeIcon);
-        if (punct != target) {
-            g_callbacks.executeCommand(kCmdAsciiPunct);
-        }
+        if (plan.sendMode) g_callbacks.executeCommand(kPlanCmdMode);
+        if (plan.sendPunct) g_callbacks.executeCommand(kPlanCmdPunct);
     }
     // 本地先落状态：视觉立刻响应，真实引擎状态由轮询线程随后校准
     //（executeCommand 现在丢给后台线程，不再同步等引擎）。
     std::lock_guard<std::mutex> lock(g_stateMutex);
-    g_state.ascii = target;
-    g_state.asciiPunct = target;
+    g_state.ascii = plan.asciiAfter;
+    g_state.asciiPunct = plan.punctAfter;
 }
 
 // 标点按钮：切到中文标点时，若当前是英文输入则一并切回中文。
@@ -210,16 +248,14 @@ void executePunct() {
         ascii = g_state.ascii;
         punct = g_state.asciiPunct;
     }
-    const bool target = !punct;
+    const ToolbarPlan plan = planPunctToggle(ascii, punct);
     if (g_callbacks.executeCommand) {
-        g_callbacks.executeCommand(kCmdAsciiPunct);
-        if (!target && ascii) {
-            g_callbacks.executeCommand(kCmdModeIcon);
-        }
+        if (plan.sendPunct) g_callbacks.executeCommand(kPlanCmdPunct);
+        if (plan.sendMode) g_callbacks.executeCommand(kPlanCmdMode);
     }
     std::lock_guard<std::mutex> lock(g_stateMutex);
-    g_state.asciiPunct = target;
-    if (!target && ascii) g_state.ascii = false;
+    g_state.asciiPunct = plan.punctAfter;
+    g_state.ascii = plan.asciiAfter;
 }
 
 void showFunctionMenu(HWND owner) {
@@ -640,11 +676,10 @@ void threadProc() {
     //（WS_POPUP 默认矩形）。尺寸变化时在 WM_SIZE 里重设。
     applyRoundedRegion(hwnd);
     positionWindow(hwnd);
-    // 初始状态从引擎读一次（这里还在启动阶段，阻塞无妨）。
-    if (g_callbacks.readState) {
-        std::lock_guard<std::mutex> lock(g_stateMutex);
-        g_state = g_callbacks.readState();
-    }
+    // 初始状态不再从引擎同步读（2026-11-21 移除）：readState 要拿
+    // g_dispatchLock，daemon 冷启动部署期间（可达数十秒）会把窗口线程冻在
+    // 这里。默认态（中/。/半）够用——引擎就绪后第一个按键回包经
+    // updateToolbarState 推送真实值。
     // 初始按"是否已有激活客户端"决定：daemon 启动时通常没有，先隐藏；
     // 一旦 DLL 发 onActivate 就会显示出来。
     ::ShowWindow(hwnd, SW_HIDE);

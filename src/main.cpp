@@ -191,6 +191,16 @@ void refreshMenuTreeCacheAsync(DaemonEngine* engineOverride) {
   if (g_menuTreeRefreshing.exchange(true)) return;  // 已有在跑
   std::thread([engineOverride]() {
     Json::Value built(Json::arrayValue);
+    // **引擎未就绪（重启后部署中）时绝不进入本函数的任何持锁段**
+    //（2026-11-21 用户实报"每次重启完，点击墨字，卡好多秒"）：
+    // 下面的 g_dispatchLock 段里 eng->ensureEngine() 会原地等部署完成
+    // （可达数十秒），持有分发锁期间所有宿主打字 RPC、所有菜单命令全部
+    // 冻结——外发版绝不能有这个体感。部署完成后的下一次刷新（菜单命令/
+    // 点击）自然补上缓存；在那之前菜单显示"（引擎未就绪）"，秒开不卡。
+    if (!RimeRuntime::instance().ready()) {
+      g_menuTreeRefreshing.store(false);
+      return;
+    }
     if (g_menu != nullptr) {
       DaemonEngine* eng = engineOverride;
       DaemonEngine fallback;
@@ -1225,6 +1235,14 @@ int main(int argc, char** argv) {
           {
             std::thread([name]() {
               RimeRuntime& rt = RimeRuntime::instance();
+              // **引擎未就绪（重启后部署中）时直接放弃**（2026-11-21 用户
+              // 实报"重启完点墨卡几十秒"的同族冻结源）：下面的锁内段含
+              // ensureEngine，部署期会原地等最多 30 秒并全程持有分发锁——
+              // 所有宿主打字冻结。部署完成后下一个按键/点击自然生效。
+              if (!rt.ready()) {
+                daemonLog(L"[toolbar] toggle dropped (engine not ready)");
+                return;
+              }
               // 锁序：分发锁 -> 引擎锁（与 dispatchRequest 一致，避免循环等待）。
               ::EnterCriticalSection(&g_dispatchLock);
               {
@@ -1315,16 +1333,23 @@ int main(int argc, char** argv) {
             }).detach();
           }
         } else {
-          // 菜单里的其他命令（方案/主题/打开文件等）仍走标准分发路径。
-          Json::Value req(Json::objectValue);
-          req["method"] = "METHOD_ON_COMMAND";
-          req["commandId"] = commandId;
-          req["seqNum"] = 0;
-          Json::StreamWriterBuilder wb;
-          wb["commentStyle"] = "None";
-          wb["indentation"] = "";
-          const std::string body = Json::writeString(wb, req);
-          Moqi::MoqiServeDispatch(body, "daemon-tray", [](const std::string&) {});
+          // 菜单里的其他命令（方案/主题/打开文件/维护等）仍走标准分发路径。
+          // **必须丢后台线程**（2026-11-21）：本回调在工具栏 UI 线程里被
+          // showFunctionMenu 同步调用，MoqiServeDispatch 要拿 g_dispatchLock
+          // ——部署/引擎操作持锁期间（可达数十秒），UI 线程同步等锁=工具栏
+          // "程序未响应"。后台执行，锁竞争自然串行。
+          const int cmd = commandId;
+          std::thread([cmd]() {
+            Json::Value req(Json::objectValue);
+            req["method"] = "METHOD_ON_COMMAND";
+            req["commandId"] = cmd;
+            req["seqNum"] = 0;
+            Json::StreamWriterBuilder wb;
+            wb["commentStyle"] = "None";
+            wb["indentation"] = "";
+            const std::string body = Json::writeString(wb, req);
+            Moqi::MoqiServeDispatch(body, "daemon-tray", [](const std::string&) {});
+          }).detach();
         }
         Moqi::pokeToolbarState();
         // 命令改动了状态（开关/方案/外观），缓存立即过期 -> 后台刷新一次，
@@ -1351,14 +1376,28 @@ int main(int argc, char** argv) {
         DWORD pid = 0;
         ::GetWindowThreadProcessId(fg, &pid);
         if (pid == 0) return false;
-        // 自己的窗口（工具栏/托盘）不算"前台是我们的宿主"——鼠标点工具栏
-        // 时前台会变成它自己，不能因此判定为继续显示。
+        // 前台是本进程窗口（工具栏/托盘/弹出菜单）时，**沿用上一个真实
+        // 前台的判定**（2026-11-21 用户实报"点桌面后点墨字，菜单弹出即
+        // 消失"）：
+        //
+        // 旧实现这里一律返回 false，配合 showFunctionMenu 里
+        // SetForegroundWindow(owner)，250ms 显隐定时器会在菜单还开着时
+        // 把工具栏 ShowWindow(SW_HIDE)——拥有者窗口一隐藏，TrackPopupMenu
+        // 立即被系统取消，菜单就"弹出来立马消失"。记事本在前台时不复现，
+        // 因为 SetForegroundWindow 抢不过它，前台仍是宿主。
+        //
+        // 缓存最近一次"非自身前台"的判定：点工具栏期间保持显示；真正切到
+        // 别的应用/输入法时前台换人（不是本进程），缓存随之刷新→正常隐藏。
+        static std::atomic<int> lastServed{-1};  // -1=未知，0=否，1=是
         if (pid == ::GetCurrentProcessId()) {
-          // 落回上一个真实前台：工具栏本身 WS_EX_NOACTIVATE 不该抢焦点，
-          // 走到这里说明宿主已切走，按隐藏处理。
-          return false;
+          const int cached = lastServed.load(std::memory_order_relaxed);
+          // 未知时保守显示：工具栏此刻就在屏幕上、用户正在点它，
+          // 隐藏只会造成"菜单闪一下就没了"。
+          return cached < 0 ? true : cached == 1;
         }
-        return g_serve->isProcessIdServed(pid);
+        const bool served = g_serve->isProcessIdServed(pid);
+        lastServed.store(served ? 1 : 0, std::memory_order_relaxed);
+        return served;
       };
       Moqi::startToolbar(std::move(tbCb));
       Moqi::setToolbarEnabled(toolbarWanted);

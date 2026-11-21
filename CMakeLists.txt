@@ -138,6 +138,7 @@ target_include_directories(lite_menu_test PRIVATE src "${TS_DIR}"
   "${MOQI_WIN_DIR}" "${MOQI_WIN_DIR}/jsoncpp/include")
 target_link_libraries(lite_menu_test jsoncpp_static)
 add_test(NAME lite_menu_test COMMAND lite_menu_test)
+add_test(NAME toolbar_plan_test COMMAND toolbar_plan_test)
 endif()
 
 if(NOT MOQI_LITE)
@@ -160,6 +161,9 @@ set_target_properties(MoqiDaemon PROPERTIES LINK_FLAGS
 #（从 Go 后端实链抓取），行为先行锁定再实现。
 if(NOT MOQI_LITE)
 add_executable(daemon_menu_test tests/daemon_menu_test.cpp src/DaemonMenuCore.cpp)
+# 工具栏联动计划单测（2026-11-21）：纯函数四象限 + 与实现文件同步性断言。
+add_executable(toolbar_plan_test tests/toolbar_plan_test.cpp)
+target_include_directories(toolbar_plan_test PRIVATE src)
 target_include_directories(daemon_menu_test PRIVATE src)
 target_compile_definitions(daemon_menu_test PRIVATE
   TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
@@ -258,7 +262,11 @@ add_executable(daemon_engine_desync_test
   src/DaemonWebDAV.cpp
   src/DaemonWebDAV.h
   "${TS_DIR}/RimeCore.cpp"
-  "${TS_DIR}/LocalRerank.cpp")
+  "${TS_DIR}/LocalRerank.cpp"
+  # DaemonEngine.cpp 引用 updateToolbarState（2026-11-21 联动改造后），
+  # 链 DaemonEngine 的测试必须带工具栏实现；其 daemonLogExtern 依赖由
+  # tests/stub_daemonlog.cpp 桩掉。
+  src/DaemonToolbar.cpp)
 target_include_directories(daemon_engine_desync_test PRIVATE
   src "${TS_DIR}" "${MOQI_WIN_DIR}" "${MOQI_WIN_DIR}/proto"
   "${MOQI_WIN_DIR}/jsoncpp/include")
