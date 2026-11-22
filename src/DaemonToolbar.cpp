@@ -351,9 +351,10 @@ void onPaint(HWND hwnd) {
         ncm.lfMessageFont.lfWeight = FW_NORMAL;
         // 字号固定像素（2026-11-21 用户实报：Win7 比 Win10 大很多——旧算法
         // 按系统消息字体 ×1.4，随机器显示缩放 DPI 漂移）。工具栏窗口本身就是
-        // 固定像素（122x35），字号固定 -20 与之自洽，两系统/任何缩放一致；
+        // 固定像素（122x35），字号固定与像素几何自洽，两系统/任何缩放一致；
         // DPI 不感知进程在高 DPI 屏由系统虚拟化整体拉伸，等比不失配。
-        ncm.lfMessageFont.lfHeight = -20;
+        // -18（2026-11-22 用户"还是有点大，缩小10%"：-20×0.9 取整）。
+        ncm.lfMessageFont.lfHeight = -18;
         // 微软雅黑常规体（2026-11-21 用户定稿"都用雅黑，效果一致"）：
         // Win7 的 SimHei 老版字形有缺陷（"英"草字头横线断裂），且两系统
         // SimHei 版本不同导致字形不一致；雅黑两系统矢量渲染一致且为小字
@@ -442,23 +443,37 @@ void applyRoundedRegion(HWND hwnd) {
     }
 }
 
+// 工具栏窗口尺寸（复位与拖动钳制共用同一公式，防两处漂移）。
+int toolbarWidth() {
+    return kBtnWidth * kBtnCount + kBtnGap * (kBtnCount - 1) + kPad * 2;
+}
+
+int toolbarHeight() { return kBtnHeight + kPad * 2; }
+
+// 把窗口左上角钳制到工作区内（全窗可见）：不越屏幕边缘、不压任务栏。
+// 拖动跟手与复位校正共用（2026-11-22 用户实报"拖动能拖出屏幕视线外"——
+// 旧拖动路径直接跟鼠标，没有任何边界）。
+void clampToWorkArea(int& x, int& y, int w, int h) {
+    RECT work = {};
+    if (!::SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0)) {
+        work.right = ::GetSystemMetrics(SM_CXSCREEN);
+        work.bottom = ::GetSystemMetrics(SM_CYSCREEN);
+    }
+    if (x + w > work.right) x = work.right - w;
+    if (y + h > work.bottom) y = work.bottom - h;
+    if (x < work.left) x = work.left;
+    if (y < work.top) y = work.top;
+}
+
 void positionWindow(HWND hwnd) {
-    const int w = kBtnWidth * kBtnCount + kBtnGap * (kBtnCount - 1) + kPad * 2;
-    const int h = kBtnHeight + kPad * 2;
+    const int w = toolbarWidth();
+    const int h = toolbarHeight();
     // 用户拖过就留在用户放的地方（只做一次越界校正，防止拖到屏幕外后
     // 分辨率变化导致窗口彻底看不见）。
     if (g_hasUserPos) {
-        RECT work = {};
-        if (!::SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0)) {
-            work.right = ::GetSystemMetrics(SM_CXSCREEN);
-            work.bottom = ::GetSystemMetrics(SM_CYSCREEN);
-        }
         int x = g_userPos.x;
         int y = g_userPos.y;
-        if (x + w > work.right) x = work.right - w;
-        if (y + h > work.bottom) y = work.bottom - h;
-        if (x < work.left) x = work.left;
-        if (y < work.top) y = work.top;
+        clampToWorkArea(x, y, w, h);
         ::SetWindowPos(hwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE);
         return;
     }
@@ -569,8 +584,11 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (g_dragging) {
                 POINT cur = {};
                 ::GetCursorPos(&cur);
-                ::SetWindowPos(hwnd, HWND_TOPMOST, cur.x - g_dragOffset.x,
-                               cur.y - g_dragOffset.y, 0, 0,
+                int x = cur.x - g_dragOffset.x;
+                int y = cur.y - g_dragOffset.y;
+                // 拖动全程钳制在工作区内：鼠标可以出去，窗口始终全窗可见。
+                clampToWorkArea(x, y, toolbarWidth(), toolbarHeight());
+                ::SetWindowPos(hwnd, HWND_TOPMOST, x, y, 0, 0,
                                SWP_NOSIZE | SWP_NOACTIVATE);
                 return 0;
             }
