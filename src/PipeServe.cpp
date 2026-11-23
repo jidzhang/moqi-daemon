@@ -340,6 +340,12 @@ int PipeServe::run() {
         PIPE_UNLIMITED_INSTANCES, 64 * 1024, 64 * 1024, 0,
         sd != nullptr ? &sa : nullptr);
     if (pipe == INVALID_HANDLE_VALUE) {
+      // 诊断（2026-11-22）：混拼调查中 serve daemon 批量启动失败，
+      // 记录确切错误码：ACCESS_DENIED=名字被占；87/5=参数或 DACL 问题。
+      daemonLogExtern(L"[serve] pipe create failed err=" +
+                      std::to_wstring((unsigned long)::GetLastError()) +
+                      L" retry=" + std::to_wstring(retries + 1) +
+                      L" name=[" + impl_->pipeName + L"]");
       if (firstInstance) {
         // 互斥体可能因完整性/权限差异看不到，直接探活管道兜底：能连上
         // 就说明已有实例在服务，必须退出，不能无限重试占着引擎不放。
