@@ -7,6 +7,7 @@
 
 #include <cstdio>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using Moqi::Cand;
@@ -105,6 +106,61 @@ int main() {
       const bool changed = Moqi::applyMixedPairRerank("shid", cands, cursor);
       check(changed && cands[0].first == "是的",
             "mixedPair: equal-length promotion (是的) must stay");
+    }
+  }
+
+  // --- applyCollocationRerank（2026-11-26 意见案）三闸回归 ---
+  {
+    // 完全可拼分 + ≥5 字 + 对数严格占优才换位。注入 没有→意见 有据对，
+    // 复现产品栈三件套（词条召回 + bigram 对 + colloc 换位）。
+    RerankConfig cfg;  // 默认 collocPmi=2.0
+    std::unordered_map<std::string, std::unordered_map<std::string, int>>
+        pairs;
+    std::unordered_map<std::string, int> mass;
+    // 头词行存在（BFS 切分可行性；字面量为 UTF-8 转义避免源码编码问题）
+    for (const char* w : {"\xe6\x88\x91", "\xe6\xb2\xa1\xe6\x9c\x89",
+                          "\xe6\x84\x8f\xe8\xa7\x81",
+                          "\xe4\xb8\x80\xe4\xbb\xb6"}) {
+      pairs[w];
+    }
+    pairs["\xe6\xb2\xa1\xe6\x9c\x89"]["\xe6\x84\x8f\xe8\xa7\x81"] = 100;
+    mass["\xe6\xb2\xa1\xe6\x9c\x89"] = 65459;
+    mass["\xe6\x84\x8f\xe8\xa7\x81"] = 1629;
+    RerankData::instance().injectForTest(cfg, std::move(pairs),
+                                         std::move(mass),
+                                         /*totalTokens=*/12686414LL);
+    {
+      // 我没有意见(#2) 对数 1>0 换到 #1。
+      std::vector<Cand> cands = {
+          {"\xe6\x88\x91\xe6\xb2\xa1\xe6\x9c\x89\xe4\xb8\x80\xe4\xbb\xb6", ""},
+          {"\xe6\x88\x91\xe6\xb2\xa1\xe6\x9c\x89\xe6\x84\x8f\xe8\xa7\x81", ""},
+          {"\xe6\x88\x91\xe6\xb2\xa1\xe6\x9c\x89", ""}};
+      int cursor = 0;
+      const bool changed = Moqi::applyCollocationRerank(
+          "wo mei you yi jian", cands, cursor);
+      check(changed &&
+                cands[0].first ==
+                    "\xe6\x88\x91\xe6\xb2\xa1\xe6\x9c\x89\xe6\x84\x8f\xe8\xa7\x81",
+            "colloc: full-pinyin 5-rune swap must reach #1");
+    }
+    {
+      // 残尾组字串整层禁换：nizaiganshenm 的纠错候选被换 #1 后空格
+      // 提交空、组字残留（2026-11-26 实炸）。
+      std::vector<Cand> cands = {
+          {"\xe4\xbd\xa0\xe5\x9c\xa8\xe5\xb9\xb2\xe4\xbb\x80\xe4\xb9\x88", ""},
+          {"\xe4\xbd\xa0\xe5\x9c\xa8\xe5\xb9\xb2\xe5\x95\xa5\xe5\x91\xa2", ""}};
+      int cursor = 0;
+      const bool changed =
+          Moqi::applyCollocationRerank("ni zai gan shen m", cands, cursor);
+      check(!changed, "colloc: residue-tail composition must gate off");
+    }
+    {
+      // <5 字候选不进门（v1 教训的残留保护）。
+      std::vector<Cand> cands = {{"\xe6\x97\xb6\xe4\xbb\xa3", ""},
+                                 {"\xe4\xb8\x96\xe4\xbb\xa3", ""}};
+      int cursor = 0;
+      const bool changed = Moqi::applyCollocationRerank("shid", cands, cursor);
+      check(!changed, "colloc: <5-rune candidates must not be touched");
     }
   }
 
