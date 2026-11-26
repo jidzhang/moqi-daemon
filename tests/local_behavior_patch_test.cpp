@@ -60,7 +60,8 @@ static const char* kProductBody =
     "  translator/typo_second_pass: true\n"
     "  translator/typo_second_pass_max_input_length: 12\n"
     "  translator/typo_second_pass_insert_after: 5\n"
-    "  translator/typo_second_pass_compete_floor: 2\n";
+    "  translator/typo_second_pass_compete_floor: 2\n"
+    "  translator/stable_prefix_bias: [0.75]\n";
 
 int main() {
   const Json::Value empty = obj("{}");
@@ -82,6 +83,10 @@ int main() {
           "correction enabled even without gram");
     check(contains(body, "correction_scan_window: 4"),
           "scan window 4 present even without gram");
+    // 前缀惯性不依赖 gram（无 gram 走动态规划组句，同样计惯性分）；
+    // 每字 0.75 分是扫参定值：2 分起整句掉分，改这个数必须重跑产品栈扫参。
+    check(contains(body, "translator/stable_prefix_bias: [0.75]"),
+          "stable prefix inertia present even without gram");
     // mixed_pair 关 + 无 gram + 无触发器：纠错行仍写入（不再真空体）
     const Json::Value ctxOff = obj(
         "{\"bigram_rerank\":{\"mixed_pair\":false}}");
