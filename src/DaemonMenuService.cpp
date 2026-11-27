@@ -422,7 +422,7 @@ std::vector<Menu::MenuSwitchDef> DaemonMenuService::loadSwitchDefs(
   std::vector<RawSwitch> raw;
   {
     char schemaId[256] = {};
-    if (runtime.rimeGetCurrentSchema != nullptr &&
+    if (runtime.ready() && runtime.rimeGetCurrentSchema != nullptr &&
         runtime.rimeGetCurrentSchema(engine.sessionId(), schemaId,
                                      sizeof(schemaId)) &&
         schemaId[0]) {
@@ -449,6 +449,16 @@ Menu::MenuState DaemonMenuService::gather(DaemonEngine& engine) {
   Menu::MenuState state;
   std::wstring root = appDataDir_.empty() ? appDataRoot() : appDataDir_;
   RimeRuntime& runtime = RimeRuntime::instance();
+  // **引擎未就绪（刚启动、部署中、或初始化失败）时绝不调 librime。**
+  // 函数指针在 loadLibrary() 之后就全部非空了，但 librime 的组件表要到
+  // RimeInitialize 才建立：这中间调 RimeGetSchemaList 是对空组件解引用，
+  // 整个 daemon 当场访问冲突退出。客户端一连上就发 ON_ACTIVATE（本函数
+  // 经 buildActivatePayload 被调），而面板/宿主连管道的轮询相位是随机的，
+  // 磁盘慢（HGFS、ProcMon、杀软扫描）时初始化窗口被拉宽就必中
+  //（2026-11-27 墨奇输入板 ProcMon 抓取：rime.dll 加载后 42ms 到达的
+  // ON_ACTIVATE 让首个 daemon 0xC0000005）。未就绪时只收集来自配置文件的
+  // 部分，引擎就绪后的下一次 gather 自然补全。
+  const bool engineReady = runtime.ready();
 
   // 开关 + 当前值
   state.switches = loadSwitchDefs(engine);
@@ -456,16 +466,17 @@ Menu::MenuState DaemonMenuService::gather(DaemonEngine& engine) {
     std::lock_guard<std::recursive_mutex> lock(runtime.mutex());
     for (const auto& sw : state.switches) {
       bool v = false;
-      if (runtime.rimeGetOption != nullptr && engine.sessionId() != 0) {
+      if (engineReady && runtime.rimeGetOption != nullptr &&
+          engine.sessionId() != 0) {
         v = runtime.rimeGetOption(engine.sessionId(), sw.name.c_str()) != 0;
       }
       state.options[sw.name] = v;
     }
   }
 
-  // 方案列表
-  if (runtime.rimeGetSchemaList != nullptr && runtime.rimeFreeSchemaList !=
-                                                  nullptr) {
+  // 方案列表（引擎未就绪时跳过：见函数开头的说明）
+  if (engineReady && runtime.rimeGetSchemaList != nullptr &&
+      runtime.rimeFreeSchemaList != nullptr) {
     rimeapi::RimeSchemaList list = {};
     if (runtime.rimeGetSchemaList(&list)) {
       char current[256] = {};

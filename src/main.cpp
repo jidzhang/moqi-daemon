@@ -54,6 +54,47 @@ wstring exeDir() {
   return slash == wstring::npos ? wstring() : dir.substr(0, slash);
 }
 
+// 绿色便携模式（2026-11-26，墨奇输入板 MoqiPanel 自带 daemon 时用）：
+// MoqiDaemon.exe --serve --portable。所有可写数据落在 exe 同目录的 user\ 下
+//（用户目录、配置根、日志、AI 配置），不写 %APPDATA%/%LOCALAPPDATA%；不挂
+// 输入工具栏/托盘/剪贴板监听（面板不是输入法）；最后一个客户端断开即退出，
+// 不留后台进程。不带 --portable 时以上全部不生效，行为逐字节不变。
+wstring g_portableRoot;  // 非空 = 便携模式，值为 <exe 目录>\user
+
+void enterPortableMode() {
+  g_portableRoot = exeDir() + L"\\user";
+  // 各目录函数（RimeCore 的 appDataRoamingDir/localAppDataDir、DebugLogConfig、
+  // DaemonAI、DaemonMenuService）都按需 _wgetenv 读下列变量、不缓存，进程内
+  // 改写即全量生效。走 SHGetKnownFolderPath 的两处（日志目录）见
+  // localAppDataBase()。
+  _wputenv_s(L"MOQI_USER_DATA_DIR", g_portableRoot.c_str());
+  _wputenv_s(L"APPDATA", g_portableRoot.c_str());
+  _wputenv_s(L"LOCALAPPDATA", g_portableRoot.c_str());
+  // daemonLog 只做单层 CreateDirectoryW（正式安装的 %LOCALAPPDATA%\MoqiIM 由
+  // 安装器建好）；全新目录里 user\MoqiIM 不存在，这里逐级建好。配置根
+  // user\Moqi 同理：正式安装里也是安装器建的，便携模式自己补上。
+  std::error_code ec;
+  std::filesystem::create_directories(g_portableRoot + L"\\MoqiIM\\Log", ec);
+  std::filesystem::create_directories(g_portableRoot + L"\\Moqi", ec);
+}
+
+// %LOCALAPPDATA% 基目录。便携模式下 LOCALAPPDATA 已在进程内重定向到 user\，
+// 而 SHGetKnownFolderPath 不认环境变量——两种模式取法不同。
+wstring localAppDataBase() {
+  if (!g_portableRoot.empty()) {
+    const wchar_t* redirected = _wgetenv(L"LOCALAPPDATA");
+    return redirected && *redirected ? wstring(redirected) : wstring();
+  }
+  wchar_t* local = nullptr;
+  if (SUCCEEDED(::SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr,
+                                       &local))) {
+    wstring dir(local);
+    ::CoTaskMemFree(local);
+    return dir;
+  }
+  return wstring();
+}
+
 // 安装布局推导：<install>\moqi-ime\input_methods\rime —— helper exe 放在
 // 安装根（与 MoqiLaunch.exe 同级）时成立；开发调试可用环境变量覆盖。
 void resolveLayout() {
@@ -113,10 +154,9 @@ void daemonLog(const wstring& message) {
   swprintf_s(stamp, L"%04d-%02d-%02d %02d:%02d:%02d.%03d", st.wYear,
              st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond,
              st.wMilliseconds);
-  wchar_t* local = nullptr;
-  if (SUCCEEDED(::SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local))) {
-    wstring dir(local);
-    ::CoTaskMemFree(local);
+  const wstring base = localAppDataBase();
+  if (!base.empty()) {
+    wstring dir = base;
     dir += L"\\MoqiIM\\Log";
     ::CreateDirectoryW(dir.c_str(), nullptr);
     rotateDaemonLogIfNeeded(dir);
@@ -183,58 +223,65 @@ std::mutex g_menuTreeMutex;          // 保护 g_cachedMenuTree 的读写
 std::atomic<bool> g_menuTreeReady{false};
 std::atomic<bool> g_menuTreeRefreshing{false};
 
+// 菜单树缓存刷新的主体（同步）。engineOverride 非空时它必须在整个调用期间
+// 存活——调用方传进来的就是自己栈上的引擎。
+Json::Value refreshMenuTreeCacheNow(DaemonEngine* engineOverride) {
+  Json::Value built(Json::arrayValue);
+  // **引擎未就绪（重启后部署中）时绝不进入本函数的任何持锁段**
+  //（2026-11-21 用户实报"每次重启完，点击墨字，卡好多秒"）：
+  // 下面的 g_dispatchLock 段里 eng->ensureEngine() 会原地等部署完成
+  //（可达数十秒），持有分发锁期间所有宿主打字 RPC、所有菜单命令全部
+  // 冻结——外发版绝不能有这个体感。部署完成后的下一次刷新（菜单命令/
+  // 点击）自然补上缓存；在那之前菜单显示"（引擎未就绪）"，秒开不卡。
+  if (!RimeRuntime::instance().ready()) {
+    return built;
+  }
+  if (g_menu != nullptr) {
+    DaemonEngine* eng = engineOverride;
+    DaemonEngine fallback;
+    // g_clients 的增删在分发线程，这里必须持分发锁读（2026-11-20 review
+    // 抓出：原来先无锁挑引擎再进锁，map 并发插入/删除是 UB）。
+    // 锁内 ensureEngine 的冷启动只发生在"还没有任何客户端"的启动预热
+    // 路径（此时没有请求会被卡住）；有客户端时引擎已热，毫秒级。
+    ::EnterCriticalSection(&g_dispatchLock);
+    if (eng == nullptr) {
+      if (g_clients.empty()) {
+        // 还没有客户端：用临时引擎抓一份结构（勾选状态可能不准，但
+        // 菜单项是齐的，足够让用户先看到菜单）。
+        fallback.ensureEngine();
+        fallback.onActivate();
+        eng = &fallback;
+      } else {
+        auto it = g_clients.find(g_lastActiveClientId);
+        eng = &(it != g_clients.end() ? it : g_clients.begin())
+                   ->second.engine;
+        eng->ensureEngine();
+        eng->onActivate();
+      }
+    }
+    built = Menu::buildMenu(g_menu->gather(*eng));
+    ::LeaveCriticalSection(&g_dispatchLock);
+    if (eng == &fallback) fallback.deactivate();
+  }
+  if (built.isArray() && !built.empty()) {
+    {
+      std::lock_guard<std::mutex> lock(g_menuTreeMutex);
+      g_cachedMenuTree = built;
+    }
+    g_menuTreeReady.store(true);
+  }
+  return built;
+}
+
 // 后台刷新菜单树缓存。点击"墨"时只发这条路、不等它，所以点击零延迟。
 // gather() 每次都重读 default.yaml / schema yaml / themes json，文件 IO 就
 // 是那"一秒钟"的来源——它不该出现在点击路径上（2026-11-19 用户实报
 // "即使每次创建菜单也用不了一秒"）。
+// engineOverride 只能是长寿命对象；调用方栈上的引擎请走同步版。
 void refreshMenuTreeCacheAsync(DaemonEngine* engineOverride) {
   if (g_menuTreeRefreshing.exchange(true)) return;  // 已有在跑
   std::thread([engineOverride]() {
-    Json::Value built(Json::arrayValue);
-    // **引擎未就绪（重启后部署中）时绝不进入本函数的任何持锁段**
-    //（2026-11-21 用户实报"每次重启完，点击墨字，卡好多秒"）：
-    // 下面的 g_dispatchLock 段里 eng->ensureEngine() 会原地等部署完成
-    // （可达数十秒），持有分发锁期间所有宿主打字 RPC、所有菜单命令全部
-    // 冻结——外发版绝不能有这个体感。部署完成后的下一次刷新（菜单命令/
-    // 点击）自然补上缓存；在那之前菜单显示"（引擎未就绪）"，秒开不卡。
-    if (!RimeRuntime::instance().ready()) {
-      g_menuTreeRefreshing.store(false);
-      return;
-    }
-    if (g_menu != nullptr) {
-      DaemonEngine* eng = engineOverride;
-      DaemonEngine fallback;
-      // g_clients 的增删在分发线程，这里必须持分发锁读（2026-11-20 review
-      // 抓出：原来先无锁挑引擎再进锁，map 并发插入/删除是 UB）。
-      // 锁内 ensureEngine 的冷启动只发生在"还没有任何客户端"的启动预热
-      // 路径（此时没有请求会被卡住）；有客户端时引擎已热，毫秒级。
-      ::EnterCriticalSection(&g_dispatchLock);
-      if (eng == nullptr) {
-        if (g_clients.empty()) {
-          // 还没有客户端：用临时引擎抓一份结构（勾选状态可能不准，但
-          // 菜单项是齐的，足够让用户先看到菜单）。
-          fallback.ensureEngine();
-          fallback.onActivate();
-          eng = &fallback;
-        } else {
-          auto it = g_clients.find(g_lastActiveClientId);
-          eng = &(it != g_clients.end() ? it : g_clients.begin())
-                     ->second.engine;
-          eng->ensureEngine();
-          eng->onActivate();
-        }
-      }
-      built = Menu::buildMenu(g_menu->gather(*eng));
-      ::LeaveCriticalSection(&g_dispatchLock);
-      if (eng == &fallback) fallback.deactivate();
-    }
-    if (built.isArray() && !built.empty()) {
-      {
-        std::lock_guard<std::mutex> lock(g_menuTreeMutex);
-        g_cachedMenuTree = built;
-      }
-      g_menuTreeReady.store(true);
-    }
+    refreshMenuTreeCacheNow(engineOverride);
     g_menuTreeRefreshing.store(false);
   }).detach();
 }
@@ -316,11 +363,10 @@ void executeLauncherCommands(int cmdId) {
   }
   switch (cmdId) {
     case Menu::ID_LAUNCHER_DEBUG_LOG: {
-      wchar_t* local = nullptr;
-      if (SUCCEEDED(::SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr,
-                                           &local))) {
-        wstring dir(local);
-        ::CoTaskMemFree(local);
+      // 便携模式下 LOCALAPPDATA 已在进程内重定向（见 localAppDataBase）。
+      const wstring base = localAppDataBase();
+      if (!base.empty()) {
+        wstring dir = base;
         dir += L"\\MoqiIM";
         ::CreateDirectoryW(dir.c_str(), nullptr);
         const wstring path = dir + L"\\MoqiLauncher.json";
@@ -1089,10 +1135,17 @@ void MoqiServeDispatch(const std::string& payload, const std::string& clientId,
 
 int main(int argc, char** argv) {
   bool serveMode = false;
+  bool portable = false;
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "--serve") == 0) {
       serveMode = true;
+    } else if (strcmp(argv[i], "--portable") == 0) {
+      portable = true;
     }
+  }
+  // 必须先于任何日志/配置/用户目录访问（见 enterPortableMode 注释）。
+  if (portable) {
+    enterPortableMode();
   }
 
   resolveLayout();
@@ -1108,8 +1161,11 @@ int main(int argc, char** argv) {
   // 5e 云剪贴板同步引擎（Go globalCloudClipboardService 等价物）。
   static Moqi::CloudClipboardSync cloudSync(loadCloudClipboardConfig());
   Moqi::setGlobalCloudSync(&cloudSync);
-  // 剪贴板监听线程（配置未启用时挂空，只读不传）。
-  startClipboardMonitor();
+  // 剪贴板监听线程（配置未启用时挂空，只读不传）。便携模式不起：面板不是
+  // 输入法，而且它自己会频繁写剪贴板。
+  if (g_portableRoot.empty()) {
+    startClipboardMonitor();
+  }
 
   // ---- 输入工具栏 / 托盘图标（2026-11-19）----
   //
@@ -1399,13 +1455,17 @@ int main(int argc, char** argv) {
         lastServed.store(served ? 1 : 0, std::memory_order_relaxed);
         return served;
       };
-      Moqi::startToolbar(std::move(tbCb));
-      Moqi::setToolbarEnabled(toolbarWanted);
-      daemonLog(std::wstring(L"[toolbar] thread started, enabled=") +
-                (toolbarWanted ? L"1" : L"0"));
+      // 便携模式（输入板自带 daemon）不挂工具栏：面板不是输入法。各
+      // setXxx/updateXxx 对未启动的工具栏空转安全（g_hwnd 为空即返回）。
+      if (g_portableRoot.empty()) {
+        Moqi::startToolbar(std::move(tbCb));
+        Moqi::setToolbarEnabled(toolbarWanted);
+        daemonLog(std::wstring(L"[toolbar] thread started, enabled=") +
+                  (toolbarWanted ? L"1" : L"0"));
+      }
     }
     // 工具栏在跑就不挂托盘（互斥）；工具栏没启用且是 Win7 才退回托盘。
-    if (!toolbarWanted) {
+    if (!toolbarWanted && g_portableRoot.empty()) {
       startTrayFallbackIfWin7();
     }
   }
@@ -1487,6 +1547,17 @@ int main(int argc, char** argv) {
         Moqi::setToolbarActiveCount(
             static_cast<int>(g_activeClientIds.size()));
       }
+      // 便携模式：daemon 的寿命 = 客户端连接的寿命。最后一个连接断开（面板
+      // 关闭或崩溃都会断管）就收摊退出，不在后台留进程。
+      if (!g_portableRoot.empty()) {
+        bool anyClient = false;
+        g_serve->forEachClient(
+            [&anyClient](const std::string&) { anyClient = true; });
+        if (!anyClient) {
+          daemonLog(L"[serve] portable: last client gone; exiting");
+          g_serve->requestStop();
+        }
+      }
     });
     // 先绑管道再后台预热：旧顺序同步 ensureEngine（最长 30 秒）在
     // serve.run() 之前，冷启动时客户端根本连不上管道，首键直落英文。
@@ -1503,11 +1574,13 @@ int main(int argc, char** argv) {
       // 这个引擎只是临时实例，用完即弃；菜单里的勾选状态以点击时的实时
       // gather 为准，缓存只顶第一次。
       // 预热期抓第一份菜单缓存：用户第一次点"墨"时缓存已经在了。
-      refreshMenuTreeCacheAsync(&warm);
-      // 等它落位（最多 5 秒），保证首次点击就有菜单可显示。
-      for (int i = 0; i < 50 && !g_menuTreeReady.load(); ++i) {
-        ::Sleep(100);
-      }
+      // 必须同步做，不能交给后台线程再"最多等 5 秒"：缓存线程要排在分发锁
+      // 后面（客户端一连上就来的 ON_MENU 正持着锁做同一次慢 gather），磁盘
+      // 慢或杀软扫描时 5 秒等不到，本线程就先 warm.deactivate() 并退出，
+      // 栈上的 warm 随之失效，缓存线程回头再碰它就是访问冲突、daemon
+      // 整个退出（2026-11-27 墨奇输入板实测抓到的栈：loadSwitchDefs 解引用
+      // 已消失的预热引擎）。
+      refreshMenuTreeCacheNow(&warm);
       daemonLog(L"[serve] menu tree cached ready=" +
                 std::to_wstring(g_menuTreeReady.load() ? 1 : 0));
       warm.deactivate();
